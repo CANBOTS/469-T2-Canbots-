@@ -2,13 +2,17 @@ import itertools
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
+from tqdm import tqdm
 import SubpopulationsLib.DataProcessing as dp
 import sklearn.metrics as metrics
 from sklearn.model_selection import KFold
 import scipy as sp
 from SubpopulationsLib.Subpopulations import find_theta_sa
 from SubpopulationsLib.Subpopulations import mixture_exponentials, mixture_SIR
+from SubpopulationsLib.Metrics import MAPE
 
+import warnings
+warnings.filterwarnings("ignore")
 
 # function to read data from a csv file
 def read_data(filename, start_date, end_date, country):
@@ -58,7 +62,7 @@ def get_peaks(data,smoothing_alg=sp.signal.savgol_filter,peak_alg=sp.signal.find
     return peaks, len(peaks)
 
 
-def fit_sir_model(data):
+def fit_sir_model(data, num_peaks):
 
     # bounds that are used for the SIR model
     bound_S = (0,1E8)
@@ -68,10 +72,10 @@ def fit_sir_model(data):
     bound_k = (0,50)
     bound_list_SIR = [bound_S, bound_beta, bound_gamma, bound_coef, bound_k]
  
-    return fit_model(data,bound_list_SIR,"SIR")
+    return fit_model(data,num_peaks,bound_list_SIR,"SIR")[1]
 
 # function to fit a guassian distribution to the data
-def fit_gaussian_model(data):
+def fit_gaussian_model(data, num_peaks):
 
     # bounds that are used for the Gaussian model
     bounds_mu = (0,50)
@@ -79,14 +83,14 @@ def fit_gaussian_model(data):
     bounds_coef = (0,300000)
     bound_list_Gaussian = [bounds_mu,bounds_sigma,bounds_coef]
     
-    return fit_model(data,bound_list_Gaussian,"Gaussian")
+    return fit_model(data,num_peaks,bound_list_Gaussian,"Gaussian")[1]
 
 
 # function to fit data to different model types
-def fit_model(data,bound_list=[],model_type="SIR"):
+def fit_model(data,num_mixtures,bound_list=[],model_type="SIR"):
 
     # get subpopulations in data
-    mixtures, num_mixtures = get_peaks(data)
+    # mixtures, num_mixtures = get_peaks(data)
 
     # make sure the bound list is not empty
     if len(bound_list) != 0:
@@ -107,8 +111,7 @@ def fit_model(data,bound_list=[],model_type="SIR"):
 
     params = find_theta_sa(bounds,norm_I,mixture)
     y_hat = mixture(params,len(norm_I)) + bias
-    
-    return y_hat
+    return params, y_hat
 
 # function to split the data into k datasets, where 1 subset is heldout, and k-1 are used for training
 # this function is not done
@@ -129,27 +132,62 @@ def compare_plots(data,country):
 
     # make the plot with the original data (not smoothed)
     plot = plot_data(data, country)
-
     # get the number of peaks in the data
     peaks, num_peaks = get_peaks(data)
-
     # fit an sir model to the data
-    sir = fit_sir_model(data)
-
+    sir = fit_sir_model(data, num_peaks)
     # fit a gaussian model to the data
-    gaussian = fit_gaussian_model(data)
+    gaussian = fit_gaussian_model(data, num_peaks)
 
     # plot the gaussian, sir, and the peaks on the same plot
     plot.plot(gaussian, color = 'red')
     plot.plot(sir, color = 'green')
     plot.plot(peaks, data[peaks], 'bo')
 
+    plt.legend([
+        'Ground truth',
+        'Gaussian mix',
+        'SIR mix',
+    ])
     # show the plot
-    plot.show()
+    plot.savefig('figure1.png')
+    mape_mixture_sir = MAPE(data, sir)
+    mape_mixture_gaussian = MAPE(data, gaussian)
+    print(f'MAPE Gaussian Mix: {mape_mixture_gaussian}\nMAPE Sir Mix: {mape_mixture_sir}\n')
+    return
 
+
+# still working on this
+def pred(data, max_k=4):
+    min_observ = 5
+    # max_k = 4
+    results_dict = dict()
+    for i in range(max_k):
+        results_dict[f'Week {i+1}'] = dict()
+        results_dict[f'Week {i+1}']['GT'] = list()
+        results_dict[f'Week {i+1}']['Gaussian_mix'] = list()
+        results_dict[f'Week {i+1}']['Sir_mix'] = list()
+
+    for i in tqdm(range(min_observ, data.shape[0]-max_k)):
+        print(f"Analyzing data up to the observation {i}\n")
+        c_data = np.array(data[0:i])
+        bias = np.min(c_data)
+        norm_I = c_data - bias
+        peaks, num_peaks = get_peaks(data)
+        params_gaussian = fit_gaussian_model(data, num_peaks)
+        params_sir = fit_sir_model(data, num_peaks)
+        for k in range(1, max_k):
+            results_dict[f'Week {k}']['GT'].append(data[i-1+k])
+            y_hat_gauss_mix = mixture_exponentials(params_gaussian, len(c_data)+k)+bias
+            results_dict[f'Week {k}']['Gaussian_mix'].append(y_hat_gauss_mix[-1])
+            y_hat_sir_mix = mixture_SIR(params_sir, len(c_data)+k)+bias
+            results_dict[f'Week {k}']['Sir_mix'].append(y_hat_sir_mix[-1])
+    return results_dict
+
+def visualize_prediction(results_dict):
+    return
 
 def main():
-
     # hardcoded data for testing
     path = "./Data/"
     start_date = '7/30/20'
@@ -171,7 +209,10 @@ def main():
 
     # get the plot
     compare_plots(data,country)
- 
+    # print("done with figure1")
+    # pred_results = pred(data)
+    # print(pred_results)
+
 main()
 
 
