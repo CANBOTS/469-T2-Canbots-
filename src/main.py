@@ -168,15 +168,47 @@ def pred(data, max_k=4):
         results_dict[f'Week {i+1}']['Gaussian_mix'] = list()
         results_dict[f'Week {i+1}']['Sir_mix'] = list()
 
-    for i in tqdm(range(min_observ, data.shape[0]-max_k)):
+    for i in range(min_observ, data.shape[0]-max_k):
         print(f"Analyzing data up to the observation {i}\n")
         c_data = np.array(data[0:i])
         bias = np.min(c_data)
         norm_I = c_data - bias
         peaks, num_peaks = get_peaks(data)
-        params_gaussian = fit_gaussian_model(data, num_peaks)
-        params_sir = fit_sir_model(data, num_peaks)
-        for k in range(1, max_k):
+        # ----------- Mixture of models -----------
+        # ---------------------------------
+        # Set the parameters for the mixture of signals approach
+        # ---------------------------------
+
+        # For the Gaussian model
+        bounds_mu = (0,i+6)
+        bounds_sigma = (1,6)
+        bounds_coef = (0,300000)
+
+        bound_list_Gaussian = [bounds_mu, bounds_sigma, bounds_coef]
+
+        bounds_Gaussian = list()
+
+        for element in bound_list_Gaussian:
+            for j in range(num_peaks):
+                bounds_Gaussian.append(element)
+
+        # For the SIR model
+        bound_S = (0,1E8)
+        bound_beta = (0,1)
+        bound_gamma = (0,1)
+        bound_coef = (0,1000)
+        bound_k = (0,i+6)
+        bound_list_SIR = [bound_S, bound_beta, bound_gamma, bound_coef, bound_k]
+
+        bounds_SIR = list()
+
+        for element in bound_list_SIR:
+            for j in range(num_peaks):
+                bounds_SIR.append(element)
+
+        params_gaussian = fit_model(data, num_peaks, bounds_Gaussian, "Gaussian")[0]
+        params_sir = fit_model(data, num_peaks, bounds_SIR)[0]
+        for k in range(1, max_k+1):
             results_dict[f'Week {k}']['GT'].append(data[i-1+k])
             y_hat_gauss_mix = mixture_exponentials(params_gaussian, len(c_data)+k)+bias
             results_dict[f'Week {k}']['Gaussian_mix'].append(y_hat_gauss_mix[-1])
@@ -184,8 +216,29 @@ def pred(data, max_k=4):
             results_dict[f'Week {k}']['Sir_mix'].append(y_hat_sir_mix[-1])
     return results_dict
 
-def visualize_prediction(results_dict):
+def visualize_prediction(results_dict, max_k=4):
+    for k in range(1, max_k+1):
+        print('Prediction ' + str(k) + ' weeks ahead')
+        gt = np.array(results_dict['Week ' + str(k)]['GT'])
+
+        predictions_Gaussian_Mix = np.array(results_dict['Week ' + str(k)]['Gaussian_mix'])
+        predictions_SIR_Mix = np.array(results_dict['Week ' + str(k)]['Sir_mix'])
+
+        print('MAPE Gaussian Mix')
+        print(MAPE(gt, predictions_Gaussian_Mix))
+        print('MAPE SIR Mix')
+        print(MAPE(gt, predictions_SIR_Mix))
+    
+        plt.figure()
+        plt.plot(gt)
+        plt.plot(predictions_Gaussian_Mix)
+        plt.plot(predictions_SIR_Mix)
+        plt.legend(['GT', 
+                    'Gaussian_mix', 
+                    'SIR_mix'])
+        plt.savefig(f"plots/week_{k}.png")
     return
+
 
 def main():
     # hardcoded data for testing
@@ -209,9 +262,11 @@ def main():
 
     # get the plot
     compare_plots(data,country)
-    # print("done with figure1")
-    # pred_results = pred(data)
+    print("done with figure1")
+
+    pred_results = pred(data)
     # print(pred_results)
+    visualize_prediction(pred_results)
 
 main()
 
