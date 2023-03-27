@@ -4,8 +4,9 @@ import numpy as np
 import SubpopulationsLib.DataProcessing as dp
 import sklearn.metrics as metrics
 import scipy as sp
-from SubpopulationsLib.Subpopulations import find_theta_sa
-from SubpopulationsLib.Subpopulations import mixture_exponentials, mixture_SIR
+import datetime
+from SubpopulationsLib.Subpopulations import mixture_exponentials, mixture_SIR, find_theta_sa
+from SubpopulationsLib.Metrics import MAPE
 
 
 
@@ -31,13 +32,17 @@ def plot_data(data, country):
     #plot the data
     plt.plot(data)
     plt.xlabel("Time (weeks)")
-    plt.ylabel("Number of infected people")
-    plt.title("Number of infected people over time in " + country)
+    plt.ylabel("Number of Infected people")
+    plt.title("Number of Infected people over time in " + country)
     return plt
 #method which returns the peaks of the data
 def get_peaks(data):
-    smoothed_data =  sp.signal.savgol_filter(data, len(data)//2,3)
+    smoothed_data =  sp.signal.savgol_filter(data, len(data)//2,5)
     peaks = sp.signal.find_peaks(smoothed_data)[0]
+
+    if len(peaks) == 0:
+        return 0,2
+
     return peaks, len(peaks)
 
 def fit_sir_model(data):
@@ -62,9 +67,18 @@ def fit_sir_model(data):
     
     return y_hat_SIR
 
-def fit_gaussian_model(data):
+def fit_gaussian_model(data, params):
+    
+    bias = np.min(data)
+    norm_I = data - bias
+    T = len(norm_I)
+    y_hat_gaussian = mixture_exponentials(params, T)
+    
+    return y_hat_gaussian
+
+def gaussian_params(data):
     num_mixtures = get_peaks(data)[1]
-    bounds_mu = (0,50)
+    bounds_mu = (0,65)
     bounds_sigma = (1,6)
     bounds_coef = (0,300000)
 
@@ -76,27 +90,81 @@ def fit_gaussian_model(data):
         for i in range(num_mixtures):
             bounds_Gaussian.append(element)
     bias = np.min(data)
-    norm_I = data - bias
+    #norm_I = data - bias
 
-    params_gaussian = find_theta_sa(bounds_Gaussian, norm_I, mixture_exponentials)
+    params_gaussian = find_theta_sa(bounds_Gaussian, data, mixture_exponentials)
+    return params_gaussian
+
+def forecast_gaussian(data, params, steps):
+    bias = np.min(data)
+    norm_I = data - bias
     T = len(norm_I)
-    y_hat_gaussian = mixture_exponentials(params_gaussian, T) + bias
+    y_hat_gaussian = mixture_exponentials(params, T) + bias
+
+    for i in range(steps):
+        c_T = len(y_hat_gaussian)
+        new = mixture_exponentials(params, c_T + i) + bias
+
+        y_hat_gaussian = np.append(y_hat_gaussian,[new[-1]])
+
     return y_hat_gaussian
+    
+
+def is_holdiday(date, country):
+    if country == "Canada":
+        holidays = {"01/01", "02/15", "04/02", "04/05", "05/24", "07/01", "08/02", "09/06", "10/11", "12/25"}
+    elif country == "United States":
+        holidays = {"01/01", "01/18", "02/15", "05/31", "07/05", "09/06", "10/11", "11/11", "11/25", "12/25"}
+    date = date[0:-2]+"20"+date[-2:] #converts date to format that datetime can read
+    date = datetime.datetime.strptime(date, "%m/%d/%Y")
+    #check if there is a holday within two weeks after the date
+    for i in range(1,15):
+        if date.strftime("%m/%d") in holidays:
+            return True
+        date += datetime.timedelta(days=1)
+    return False
+
+#function to determine whether the end of the data set is a peak
+def tail_peak(data):
+    #assumes the data is already smoothed
+    #check if the last 4 values are decreasing
+    for i in range(4):
+        if data[-1] < data[-i-1]:
+            return 0
+    return 1
+
+#function to train a model to get the parameters for the next gaussian model based on the paramters of the previous gaussian curve
+# def get_next_params(params):
+#     mu = params[1] + 
+
+
+
+
+
+    
 
 
 
 def main():
     path = "./Data/"
-    start_date = '7/30/20'
+    start_date = '2/28/20'
     end_date = '7/30/21'
     country = 'Canada'
     data = read_data(path, start_date, end_date, country)
     plot = plot_data(data, country)
     peaks, num_peaks = get_peaks(data)
-    sir = fit_sir_model(data)
-    gaussian = fit_gaussian_model(data)
+    print(num_peaks)
+    #sir = fit_sir_model(data)
+    g_params = gaussian_params(data)
+    
+    gaussian = fit_gaussian_model(data, g_params)
+
     plot.plot(gaussian, color = 'red')
-    plot.plot(sir, color = 'green')
+    print("Gaussian MAPE: ", MAPE(data, gaussian))
+    #print("SIR MSE: ", mse(data, sir))    
+ 
+    # # print("SIR MAPE: ", MAPE(data, sir))    
+    #plot.plot(sir, color = 'green')
     plot.plot(peaks, data[peaks], 'bo')
     plot.show()
 
