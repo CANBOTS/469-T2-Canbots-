@@ -72,13 +72,13 @@ def fit_gaussian_model(data, params):
     bias = np.min(data)
     norm_I = data - bias
     T = len(norm_I)
-    y_hat_gaussian = mixture_exponentials(params, T)
+    y_hat_gaussian = mixture_exponentials(params, T) + bias
     
     return y_hat_gaussian
 
 def gaussian_params(data):
     num_mixtures = get_peaks(data)[1]
-    bounds_mu = (0,65)
+    bounds_mu = (0,50)
     bounds_sigma = (1,6)
     bounds_coef = (0,300000)
 
@@ -90,9 +90,9 @@ def gaussian_params(data):
         for i in range(num_mixtures):
             bounds_Gaussian.append(element)
     bias = np.min(data)
-    #norm_I = data - bias
+    norm_I = data - bias
 
-    params_gaussian = find_theta_sa(bounds_Gaussian, data, mixture_exponentials)
+    params_gaussian = find_theta_sa(bounds_Gaussian, norm_I, mixture_exponentials) 
     return params_gaussian
 
 def forecast_gaussian(data, params, steps):
@@ -134,9 +134,12 @@ def tail_peak(data):
     return 1
 
 #function to train a model to get the parameters for the next gaussian model based on the paramters of the previous gaussian curve
-# def get_next_params(params):
-#     mu = params[1] + 
+def get_next_params(params):
+    mu = params[0] + 18 #assume that the next peak will be 18 weeks after the previous peak
+    sigma = params[1] #assume that the next peak will have the same standard deviation as the previous peak
+    coef = params[2]
 
+    return mu, sigma, coef
 
 
 
@@ -147,13 +150,12 @@ def tail_peak(data):
 
 def main():
     path = "./Data/"
-    start_date = '2/28/20'
+    start_date = '7/30/20'
     end_date = '7/30/21'
     country = 'Canada'
     data = read_data(path, start_date, end_date, country)
     plot = plot_data(data, country)
     peaks, num_peaks = get_peaks(data)
-    print(num_peaks)
     #sir = fit_sir_model(data)
     g_params = gaussian_params(data)
     
