@@ -23,6 +23,15 @@ def read_data(filename, start_date, end_date, country):
     data = I[1:]
     return data
 
+#function to get csv data for cases per country and date
+def get_csv_data(filename, start_date, end_date, country):
+    df = pd.read_csv('./Data/WHO-COVID-19-global-data.csv')
+    df = df[df['Country'] == country]
+    df = df[df['Date_reported'] >= start_date]
+    df = df[df['Date_reported'] <= end_date]
+    
+    return df
+
 
 #create a function to plot the data using matplotlib
 def plot_data(data, country):
@@ -96,16 +105,30 @@ def gaussian_params(data):
     return params_gaussian
 
 def forecast_gaussian(data, params, steps):
+
+
+
     bias = np.min(data)
     norm_I = data - bias
     T = len(norm_I)
+    if tail_peak(data):
+        next_params = get_next_params(params)
+        params= np.insert(params, 1,next_params[0])
+        params= np.insert(params, 3,next_params[1])
+        params= np.insert(params, 5,next_params[2])
+    
+
     y_hat_gaussian = mixture_exponentials(params, T) + bias
+    
 
     for i in range(steps):
         c_T = len(y_hat_gaussian)
         new = mixture_exponentials(params, c_T + i) + bias
 
         y_hat_gaussian = np.append(y_hat_gaussian,[new[-1]])
+    
+
+
 
     return y_hat_gaussian
     
@@ -136,10 +159,12 @@ def tail_peak(data):
 #function to train a model to get the parameters for the next gaussian model based on the paramters of the previous gaussian curve
 def get_next_params(params):
     mu = params[0] + 18 #assume that the next peak will be 18 weeks after the previous peak
-    sigma = params[1] #assume that the next peak will have the same standard deviation as the previous peak
+    sigma = params[1] -1 #assume that the next peak will have the same standard deviation as the previous peak
     coef = params[2]
 
     return mu, sigma, coef
+
+
 
 
 
@@ -150,25 +175,34 @@ def get_next_params(params):
 
 def main():
     path = "./Data/"
-    start_date = '7/30/20'
-    end_date = '7/30/21'
+    # start_date = '7/30/20'
+    # end_date = '3/30/21'
+    start_date = '2020-07-30'
+    end_date = '2021-03-30'
+    end_date2 = '7/30/21'
     country = 'Canada'
-    data = read_data(path, start_date, end_date, country)
-    plot = plot_data(data, country)
-    peaks, num_peaks = get_peaks(data)
-    #sir = fit_sir_model(data)
-    g_params = gaussian_params(data)
-    
-    gaussian = fit_gaussian_model(data, g_params)
+    df = get_csv_data(path, start_date, end_date, country)
+    print(df)
 
-    plot.plot(gaussian, color = 'red')
-    print("Gaussian MAPE: ", MAPE(data, gaussian))
-    #print("SIR MSE: ", mse(data, sir))    
+    # data = read_data(path, start_date, end_date, country)
+    # data2 = read_data(path, start_date, end_date2, country)
+
+    # plot = plot_data(data, country)
+    # plot.plot(data2, color = 'green')
+    # peaks, num_peaks = get_peaks(data)
+    # #sir = fit_sir_model(data)
+    # g_params = gaussian_params(data)
+    
+    # gaussian = forecast_gaussian(data, g_params,10)
+
+    # plot.plot(gaussian, color = 'red')
+    # #print("Gaussian MAPE: ", MAPE(data, gaussian))
+    # #print("SIR MSE: ", mse(data, sir))    
  
-    # # print("SIR MAPE: ", MAPE(data, sir))    
-    #plot.plot(sir, color = 'green')
-    plot.plot(peaks, data[peaks], 'bo')
-    plot.show()
+    # # # print("SIR MAPE: ", MAPE(data, sir))    
+    # #plot.plot(sir, color = 'green')
+    # #plot.plot(peaks, data[peaks], 'bo')
+    # plot.show()
 
 
     
