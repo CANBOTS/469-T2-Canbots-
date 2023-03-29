@@ -1,178 +1,233 @@
-import itertools
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 import SubpopulationsLib.DataProcessing as dp
 import sklearn.metrics as metrics
-from sklearn.model_selection import KFold
 import scipy as sp
-from SubpopulationsLib.Subpopulations import find_theta_sa
-from SubpopulationsLib.Subpopulations import mixture_exponentials, mixture_SIR
+import datetime
+from SubpopulationsLib.Subpopulations import mixture_exponentials, mixture_SIR, find_theta_sa
+from SubpopulationsLib.Metrics import MAPE
 
 
-# function to read data from a csv file
+
+
+#create a function to read the data from the csv file
 def read_data(filename, start_date, end_date, country):
-
-    # get SIR data from the specified file
     S,I,R = dp.create_SIR_data(country, filename, './Data/UID_ISO_FIPS_LookUp_Table.csv', start_date, end_date)
     
-    # create indices to put data into a weekly format
     indexes_weekly = np.arange(0,S.shape[0],7)
 
-    # use the indices to get weekly data
     S = S[indexes_weekly]
     I = I[indexes_weekly]
     R = R[indexes_weekly]
-
-    # get rid of the first element of the data
     data = I[1:]
-
     return data
 
+#function to get csv data for cases per country and date
+def get_csv_data(filename, start_date, end_date, country):
+    df = pd.read_csv('./Data/WHO-COVID-19-global-data.csv')
+    df = df[df['Country'] == country]
+    df = df[df['Date_reported'] >= start_date]
+    df = df[df['Date_reported'] <= end_date]
+    
+    return df
 
-# function to create a plot with a given data set
-def plot_data(data, country,title="# of infected people over time in ",x_label="# infected",y_label="time (weeks)"):
 
+#create a function to plot the data using matplotlib
+def plot_data(data, country):
     #create a figure
-    plt.figure()
 
+    plt.figure()
     #plot the data
     plt.plot(data)
-    plt.xlabel(x_label)
-    plt.ylabel(y_label)
-    plt.title(title + country)
-
+    plt.xlabel("Time (weeks)")
+    plt.ylabel("Number of Infected people")
+    plt.title("Number of Infected people over time in " + country)
     return plt
+#method which returns the peaks of the data
+def get_peaks(data):
+    smoothed_data =  sp.signal.savgol_filter(data, len(data)//2,5)
+    peaks = sp.signal.find_peaks(smoothed_data)[0]
 
-# function to find and return peaks in data
-def get_peaks(data,smoothing_alg=sp.signal.savgol_filter,peak_alg=sp.signal.find_peaks):
-
-    # filter used to smooth the data 
-    # for more info on filter, look at https://en.wikipedia.org/wiki/Savitzky%E2%80%93Golay_filter
-    smoothed_data =  smoothing_alg(data, len(data)//2,3)
-
-    # finds the peaks in the smoothed data
-    # uses neighbouring data in dataset to determine local maxima, which are considered peaks
-    peaks = peak_alg(smoothed_data)[0]
+    if len(peaks) == 0:
+        return 0,2
 
     return peaks, len(peaks)
 
-
 def fit_sir_model(data):
-
-    # bounds that are used for the SIR model
+    num_mixtures = get_peaks(data)[1]
     bound_S = (0,1E8)
     bound_beta = (0,1)
     bound_gamma = (0,1)
     bound_coef = (0,1000)
     bound_k = (0,50)
     bound_list_SIR = [bound_S, bound_beta, bound_gamma, bound_coef, bound_k]
- 
-    return fit_model(data,bound_list_SIR,"SIR")
 
-# function to fit a guassian distribution to the data
-def fit_gaussian_model(data):
+    bounds_SIR = list()
 
-    # bounds that are used for the Gaussian model
+    for element in bound_list_SIR:
+        for i in range(num_mixtures):
+            bounds_SIR.append(element)
+    bias = np.min(data)
+    norm_I = data - bias    
+    params_SIR = find_theta_sa(bounds_SIR, norm_I, mixture_SIR)
+    T = len(norm_I)
+    y_hat_SIR = mixture_SIR(params_SIR, T) + bias
+    
+    return y_hat_SIR
+
+def fit_gaussian_model(data, params):
+    
+    bias = np.min(data)
+    norm_I = data - bias
+    T = len(norm_I)
+    y_hat_gaussian = mixture_exponentials(params, T) + bias
+    
+    return y_hat_gaussian
+
+def gaussian_params(data):
+    num_mixtures = get_peaks(data)[1]
     bounds_mu = (0,50)
     bounds_sigma = (1,6)
     bounds_coef = (0,300000)
-    bound_list_Gaussian = [bounds_mu,bounds_sigma,bounds_coef]
-    
-    return fit_model(data,bound_list_Gaussian,"Gaussian")
 
+    bound_list_Gaussian = [bounds_mu, bounds_sigma, bounds_coef]
 
-# function to fit data to different model types
-def fit_model(data,bound_list=[],model_type="SIR"):
+    bounds_Gaussian = list()
 
-    # get subpopulations in data
-    mixtures, num_mixtures = get_peaks(data)
-
-    # make sure the bound list is not empty
-    if len(bound_list) != 0:
-        
-        # create the list of bounds with repeated values
-        # this is faster than nested for loops
-        # code used is from https://stackoverflow.com/a/24225372
-        bounds = list(itertools.chain.from_iterable(itertools.repeat(i,num_mixtures) for i in bound_list))
-
+    for element in bound_list_Gaussian:
+        for i in range(num_mixtures):
+            bounds_Gaussian.append(element)
     bias = np.min(data)
     norm_I = data - bias
 
-    # check which model will be used
-    if model_type == "SIR":
-        mixture = mixture_SIR
-    elif model_type == "Gaussian":
-        mixture = mixture_exponentials
+    params_gaussian = find_theta_sa(bounds_Gaussian, norm_I, mixture_exponentials) 
+    return params_gaussian
 
-    params = find_theta_sa(bounds,norm_I,mixture)
-    y_hat = mixture(params,len(norm_I)) + bias
+def forecast_gaussian(data, params, steps):
+
+
+
+    bias = np.min(data)
+    norm_I = data - bias
+    T = len(norm_I)
+    if tail_peak(data):
+        next_params = get_next_params(params)
+        params= np.insert(params, 1,next_params[0])
+        params= np.insert(params, 3,next_params[1])
+        params= np.insert(params, 5,next_params[2])
     
-    return y_hat
 
-# function to split the data into k datasets, where 1 subset is heldout, and k-1 are used for training
-# this function is not done
-def k_folds_cross_val(data,k=10,holdout_index=0):
-
-    # instantiate k folds cross validator object with k=10 folds (from sklearn)
-    k_folds = KFold(k)
-
-    # split the data into k datasets
-    split_data = k_folds.split(data)
-
-    # return a generator object
-    return split_data
+    y_hat_gaussian = mixture_exponentials(params, T) + bias
     
-# turned this into its own function since this may be used often for comparing models
-# plots the sir + gaussian models on the same plot
-def compare_plots(data,country):
 
-    # make the plot with the original data (not smoothed)
-    plot = plot_data(data, country)
+    for i in range(steps):
+        c_T = len(y_hat_gaussian)
+        new = mixture_exponentials(params, c_T + i) + bias
 
-    # get the number of peaks in the data
-    peaks, num_peaks = get_peaks(data)
+        y_hat_gaussian = np.append(y_hat_gaussian,[new[-1]])
+    
 
-    # fit an sir model to the data
-    sir = fit_sir_model(data)
 
-    # fit a gaussian model to the data
-    gaussian = fit_gaussian_model(data)
 
-    # plot the gaussian, sir, and the peaks on the same plot
-    plot.plot(gaussian, color = 'red')
-    plot.plot(sir, color = 'green')
-    plot.plot(peaks, data[peaks], 'bo')
+    return y_hat_gaussian
+    
+#function to forecast the data using the SIR model
+def forecast_sir(data, params, steps):
+    bias = np.min(data)
+    norm_I = data - bias
+    T = len(norm_I)
 
-    # show the plot
-    plot.show()
+    if tail_peak(data):
+        next_params = get_next_params(params)
+        params= np.insert(params, 1,next_params[0])
+        params= np.insert(params, 3,next_params[1])
+        params= np.insert(params, 5,next_params[2])
+
+    y_hat_SIR = mixture_SIR(params, T) + bias
+    
+    for i in range(steps):
+        c_T = len(y_hat_SIR)
+        new = mixture_SIR(params, c_T + i) + bias
+
+        y_hat_SIR = np.append(y_hat_SIR,[new[-1]])
+
+    return y_hat_SIR
+
+
+
+def is_holdiday(date, country):
+    if country == "Canada":
+        holidays = {"01/01", "02/15", "04/02", "04/05", "05/24", "07/01", "08/02", "09/06", "10/11", "12/25"}
+    elif country == "United States":
+        holidays = {"01/01", "01/18", "02/15", "05/31", "07/05", "09/06", "10/11", "11/11", "11/25", "12/25"}
+    date = date[0:-2]+"20"+date[-2:] #converts date to format that datetime can read
+    date = datetime.datetime.strptime(date, "%m/%d/%Y")
+    #check if there is a holday within two weeks after the date
+    for i in range(1,15):
+        if date.strftime("%m/%d") in holidays:
+            return True
+        date += datetime.timedelta(days=1)
+    return False
+
+#function to determine whether the end of the data set is a peak
+def tail_peak(data):
+    #assumes the data is already smoothed
+    #check if the last 4 values are decreasing
+    for i in range(4):
+        if data[-1] < data[-i-1]:
+            return 0
+    return 1
+
+#function to train a model to get the parameters for the next gaussian model based on the paramters of the previous gaussian curve
+def get_next_params(params):
+    mu = params[0] + 18 #assume that the next peak will be 18 weeks after the previous peak
+    sigma = params[1] -1 #assume that the next peak will have the same standard deviation as the previous peak
+    coef = params[2]
+
+    return mu, sigma, coef
+
 
 
 def main():
-
-    # hardcoded data for testing
     path = "./Data/"
-    start_date = '7/30/20'
-    end_date = '7/30/21'
+    # start_date = '7/30/20'
+    # end_date = '3/30/21'
+    start_date = '2020-07-30'
+    end_date = '2021-03-30'
+    end_date2 = '7/30/21'
     country = 'Canada'
+    df = get_csv_data(path, start_date, end_date, country)
+    print(df)
 
-    # get the data from folder
-    data = read_data(path, start_date, end_date, country)
 
-    # split the data into k folds
-    #k = 10
-    # split_data is a generator object
-    # this is more efficient than a list, because it doesn't have to store as much data
-    #split_data = k_folds_cross_val(data,k)
-    # it might help to keep the generator object and convert to actual arrays as few times as possible for efficiency
-    # although that might be overkill lol
-    # access the 4th index in split_data efficiently using:
-    #holdout = next(itertools.islice(split_data,4))
+    # Forecasting with the SIR
+    sir = fit_sir_model(df)
 
-    # get the plot
-    compare_plots(data,country)
+    sir = forecast_sir(df, sir, 10)
+
+    print(sir)
+
+    # data = read_data(path, start_date, end_date, country)
+    # data2 = read_data(path, start_date, end_date2, country)
+
+    # plot = plot_data(data, country)
+    # plot.plot(data2, color = 'green')
+    # peaks, num_peaks = get_peaks(data)
+    # #sir = fit_sir_model(data)
+    # g_params = gaussian_params(data)
+    
+    # gaussian = forecast_gaussian(data, g_params,10)
+
+    # plot.plot(gaussian, color = 'red')
+    # #print("Gaussian MAPE: ", MAPE(data, gaussian))
+    # #print("SIR MSE: ", mse(data, sir))    
  
+    # # # print("SIR MAPE: ", MAPE(data, sir))    
+    # #plot.plot(sir, color = 'green')
+    # #plot.plot(peaks, data[peaks], 'bo')
+    # plot.show()
+
+
+    
 main()
-
-
-
