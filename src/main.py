@@ -24,7 +24,7 @@ def read_data(filename, start_date, end_date, country):
     return data
 
 #function to get csv data for cases per country and date
-def get_csv_data(filename, start_date, end_date, country):
+def get_csv_data(start_date, end_date, country):
     df = pd.read_csv('./Data/WHO-COVID-19-global-data.csv')
     df = df[df['Country'] == country]
     df = df[df['Date_reported'] >= start_date]
@@ -32,6 +32,22 @@ def get_csv_data(filename, start_date, end_date, country):
     
     return df
 
+#returns face covering and stay at home policies for a country given a start and end date as a tuple of np arrays
+def get_policy_data(start, end, country):
+    df = pd.read_csv('./Data/face-covering-policies-covid.csv')
+    df = df[df['Entity'] == country]
+    df = df[df['Date'] >= start]
+    df1 = df[df['Date'] <= end]
+
+    
+
+    
+    df = pd.read_csv('./Data/stay-at-home-covid.csv')
+    df = df[df['Entity'] == country]
+    df = df[df['Date'] >= start]
+    df2 = df[df['Date'] <= end]
+    
+    return (df1["facial_coverings"].to_numpy(),df2/["stay_home_requirements"].to_numpy())
 
 #create a function to plot the data using matplotlib
 def plot_data(data, country):
@@ -181,8 +197,11 @@ def main():
     end_date = '2021-03-30'
     end_date2 = '7/30/21'
     country = 'Canada'
-    df = get_csv_data(path, start_date, end_date, country)
-    print(df)
+    policies = get_policy_data(start_date, end_date, country)
+
+    plt.plot(policies[0])
+    plt.plot(policies[1])
+    plt.show()
 
     # data = read_data(path, start_date, end_date, country)
     # data2 = read_data(path, start_date, end_date2, country)
