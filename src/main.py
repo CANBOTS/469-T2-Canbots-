@@ -20,7 +20,7 @@ def read_data(filename, start_date, end_date, country):
     S = S[indexes_weekly]
     I = I[indexes_weekly]
     R = R[indexes_weekly]
-    data = I[1:]
+    data = R[1:]
     return data
 
 #function to get csv data for cases per country and date
@@ -31,6 +31,35 @@ def get_csv_data(start_date, end_date, country):
     df = df[df['Date_reported'] <= end_date]
     
     return df
+
+def get_no_recovery_date(country):
+    df = pd.read_csv('./Data/time_series_covid19_recovered_global.csv')
+    df = df[df['Country/Region'] == country]
+    date = date_to_datetime('3/1/20')
+    print(df["3/1/20"].values[0])
+    while df[datetime_to_date(date)].values[0] >0:
+        date += datetime.timedelta(days=1)
+    #print recoveries of previous date
+    print(df[datetime_to_date(date - datetime.timedelta(days=1))].values[0])
+    return date
+
+def datetime_to_date(date):
+    date = date.strftime("%m/%d/%Y")
+    if date[0] == "0":
+        date = date[1:]
+        if date [2] == "0":
+            date = date[:2]+date[3:]
+    if date[3] == "0":
+        date = date[:3]+date[4:]
+    
+    date = date[ : -4] + date[-2:]
+    return date
+
+def date_to_datetime(date):
+    date = date[0:-2]+"20"+date[-2:] #converts date to format that datetime can read
+    date = datetime.datetime.strptime(date, "%m/%d/%Y")
+    return date
+
 
 #returns face covering and stay at home policies for a country given a start and end date as a tuple of np arrays
 def get_policy_data(start, end, country):
@@ -191,22 +220,22 @@ def get_next_params(params):
 
 def main():
     path = "./Data/"
-    # start_date = '7/30/20'
-    # end_date = '3/30/21'
-    start_date = '2020-07-30'
-    end_date = '2021-03-30'
+    start_date = '3/30/20'
+    end_date = '3/30/22'
+    # start_date = '2020-07-30'
+    # end_date = '2021-03-30'
     end_date2 = '7/30/21'
     country = 'Canada'
-    policies = get_policy_data(start_date, end_date, country)
+    #policies = get_policy_data(start_date, end_date, country)
 
-    plt.plot(policies[0])
-    plt.plot(policies[1])
-    plt.show()
+    #plt.plot(policies[0])
+   # plt.plot(policies[1])
 
-    # data = read_data(path, start_date, end_date, country)
+    data = read_data(path, start_date, end_date, country)
     # data2 = read_data(path, start_date, end_date2, country)
 
-    # plot = plot_data(data, country)
+    plot = plot_data(data, country)
+    plot.show()
     # plot.plot(data2, color = 'green')
     # peaks, num_peaks = get_peaks(data)
     # #sir = fit_sir_model(data)
@@ -225,4 +254,4 @@ def main():
 
 
     
-main()
+print(get_no_recovery_date('Canada'))
