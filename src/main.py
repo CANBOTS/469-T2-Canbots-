@@ -18,22 +18,26 @@ from SubpopulationsLib.Metrics import MAPE
 def read_data(filename, start_date, end_date, country):
     S,I,R = dp.create_SIR_data(country, filename, './Data/UID_ISO_FIPS_LookUp_Table.csv', start_date, end_date)
     
-    # indexes_weekly = np.arange(0,S.shape[0],7)
+    indexes_weekly = np.arange(0,S.shape[0],7)
 
-    # S = S[indexes_weekly]
-    # I = I[indexes_weekly]
-    # R = R[indexes_weekly]
+    S = S[indexes_weekly]
+    I = I[indexes_weekly]
+    R = R[indexes_weekly]
     data = I[1:]
     return data
 
 #function to get csv data for cases per country and date
-def get_csv_data(start_date, end_date, country):
+def get_csv_data(country,start_date, end_date):
     df = pd.read_csv('./Data/WHO-COVID-19-global-data.csv')
     df = df[df['Country'] == country]
-    df = df[df['Date_reported'] >= start_date]
-    df = df[df['Date_reported'] <= end_date]
+    df = df[df['Date_reported'] > start_date]
+    df = df[df['Date_reported'] < end_date]
+
+    cases = df["New_cases"].to_numpy()
+    cases = sp.signal.savgol_filter(cases, len(cases)//2,7)
     
-    return df
+    return cases
+
 
 def get_no_recovery_date(country):
     df = pd.read_csv('./Data/time_series_covid19_recovered_global.csv')
@@ -44,6 +48,10 @@ def get_no_recovery_date(country):
         date += datetime.timedelta(days=1)
     #print recoveries of previous date
     return date
+def population(country):
+    df = pd.read_csv('./Data/world_population.csv')
+    df = df[df['Country/Territory'] == country]
+    return df["2020 Population"].values[0]
 
 def datetime_to_date(date):
     date = date.strftime("%m/%d/%Y")
@@ -56,6 +64,8 @@ def datetime_to_date(date):
     
     date = date[ : -4] + date[-2:]
     return date
+
+
 
 def date_to_datetime(date):
     date = date[0:-2]+"20"+date[-2:] #converts date to format that datetime can read
@@ -155,15 +165,16 @@ def gaussian_params(data):
     params_gaussian = find_theta_sa(bounds_Gaussian, norm_I, mixture_exponentials) 
     return params_gaussian
 
-def forecast_gaussian(data, params, steps):
+def forecast_gaussian( data, params, steps, start_date, country):
     bias = np.min(data)
     norm_I = data - bias
     T = len(norm_I)
     if tail_peak(data):
-        next_params = get_next_params(params)
+        next_params = get_next_params(start_date, params, country)
         params= np.insert(params, 1,next_params[0])
         params= np.insert(params, 3,next_params[1])
         params= np.insert(params, 5,next_params[2])
+    print(params)
 
     y_hat_gaussian = mixture_exponentials(params, T) + bias
     
@@ -200,12 +211,46 @@ def tail_peak(data):
     return 1
 
 #function to train a model to get the parameters for the next gaussian model based on the paramters of the previous gaussian curve
-def get_next_params(params):
+def get_next_params(start_date, params, country):
     mu = params[0] + 18 #assume that the next peak will be 18 weeks after the previous peak
+
     sigma = params[1] -1 #assume that the next peak will have the same standard deviation as the previous peak
-    coef = params[2]
+
+    #convert start_date to a datetime object
+    start_date = date_to_datetime(start_date)
+    mu_date = start_date + datetime.timedelta(days=mu*7) #convert the number of weeks to a date
+    model = linear_regression()
+    feautures = get_regression_features(mu_date, country)
+    coef = model.predict(feautures)
+
+    
+
+    return mu,sigma,coef
+
+
 
     return mu, sigma, coef
+def get_regression_features(date, country):
+    #format the date as a datetime object
+    #date = datetime.datetime.strptime(date, "%Y-%m-%d")
+    start = date-datetime.timedelta(days=1) 
+    #format the date as a string
+    start = start.strftime("%Y-%m-%d")
+
+    end = date+datetime.timedelta(days=1)
+    end = end.strftime("%Y-%m-%d")
+    
+    features = get_policy_data(start,end, country)
+    x = np.array([])
+    for feature in features:
+        x = np.append(x,feature)
+    
+    x = np.append(x,population(country))
+    poly = PolynomialFeatures(degree =5)
+    
+    x = poly.fit_transform([x])
+    return x
+    
 
 
 def linear_regression():
@@ -214,30 +259,46 @@ def linear_regression():
     start = "2020-02-28"
     end = "2021-08-05"
     path = "./Data/"
-    countries = ["Canada", "Australia","New Zealand", "Italy", "Sweden"]
+    countries = ["Canada","Italy","United Kingdom","Japan","Germany","France","Australia","New Zealand","US","China"]
     x = np.array([])
     y = np.array([])
     for country in countries:
+        #data = get_csv_data(country, start, end)
         data = read_data(path, start_date, end_date, country)
         y = np.append(y, data)
         face_policy = get_policy_data(start, end, country)[0]
         home_policy = get_policy_data(start, end, country)[1]
         school_policy = get_policy_data(start, end, country)[2]
+        pop = population(country)*np.ones(len(data))
+        indexes_weekly = np.arange(0,face_policy.shape[0],7)
+        face_policy = face_policy[indexes_weekly]
+        home_policy = home_policy[indexes_weekly]
+        school_policy = school_policy[indexes_weekly]
+
+        #remove last index from each
+        face_policy = face_policy[:-1]
+        home_policy = home_policy[:-1]
+        school_policy = school_policy[:-1]
         
 
         x1 = face_policy.reshape(-1,1)
-        x2 = home_policy.reshape(1,-1)
-        x3 = school_policy.reshape(1,-1)
+        x2 = home_policy.reshape(-1,1)
+        x3 = school_policy.reshape(-1,1)
+        x4 = pop.reshape(-1,1)
         
         #print(np.concatenate((x1,x2.T), axis = 1))
 
         if len(x)==0:
-            x = (np.concatenate((x1,x2.T), axis = 1))
-            x= np.concatenate((x,x3.T), axis = 1)
+            x = (np.concatenate((x1,x2), axis = 1))
+            x= np.concatenate((x,x3), axis = 1)
+            x = np.concatenate((x,x4), axis = 1)
+            
         else:
-            temp = np.concatenate((x1,x2.T), axis = 1)
-            temp = np.concatenate((temp,x3.T), axis = 1)
+            temp = np.concatenate((x1,x2), axis = 1)
+            temp = np.concatenate((temp,x3), axis = 1)
+            temp = np.concatenate((temp,x4), axis = 1)
             x =np.append(x,temp,0)
+        
     poly = PolynomialFeatures(degree =5)
     x = poly.fit_transform(x)
     p = np.random.permutation(len(x))
@@ -256,40 +317,24 @@ def linear_regression():
 
     model = LinearRegression().fit(x_train, y_train)
     print(model.score(x_test,y_test))
-    print(model.score(x_train,y_train))
 
     model = LinearRegression().fit(x, y)
     print(model.score(x,y))
+    return model
     
     
-
-        
-  
-
-
-
-        
-        
-       
-    
-
 
 
 
 def main():
     path = "./Data/"
-    start_date = '2/28/20'
-    end_date = '2/28/21'
-    # start_date = '2020-07-30'
-    # end_date = '2021-03-30'
-    countries = ["Canada", "Australia","New Zealand", "Italy", "Sweden"]
-
-    for country in countries:
-        
-        data = read_data(path, start_date, end_date, country)
-        plt.plot(data, label= country)
-    plt.legend()
-    plt.show()
+    start_date = '7/30/20'
+    end_date = '3/28/21'
+    end_date2 = '7/30/21'
+    # start_date = '2020-02-27'
+    # end_date = '2021-08-05'
+    country = 'Canada'
+    
     
 
 
@@ -298,16 +343,19 @@ def main():
     #plt.plot(policies[0])
    # plt.plot(policies[1])
 
-    # data2 = read_data(path, start_date, end_date2, country)
+    data = read_data(path, start_date, end_date, country)
+    data2 = read_data(path, start_date, end_date2, country)
 
-    # plot.plot(data2, color = 'green')
-    # peaks, num_peaks = get_peaks(data)
-    # #sir = fit_sir_model(data)
-    # g_params = gaussian_params(data)
+    plot = plot_data(data, country,"data")
+    #plot.plot(data2, color = 'green')
+    peaks, num_peaks = get_peaks(data)
+    #sir = fit_sir_model(data)
+    g_params = gaussian_params(data)
     
-    # gaussian = forecast_gaussian(data, g_params,10)
+    gaussian = forecast_gaussian(data, g_params,12,start_date, country)
 
-    # plot.plot(gaussian, color = 'red')
+    plot.plot(gaussian, color = 'red')
+    plot.show()
     # #print("Gaussian MAPE: ", MAPE(data, gaussian))
     # #print("SIR MSE: ", mse(data, sir))    
  
@@ -315,7 +363,9 @@ def main():
     # #plot.plot(sir, color = 'green')
     # #plot.plot(peaks, data[peaks], 'bo')
     # plot.show()
-
-linear_regression()
+#linear_regression()
+main()
+#print(get_csv_data("Canada", "2020-02-28", "2021-08-05"))
+#print(get_regression_features("2020-06-28", "Canada"))
 
     
