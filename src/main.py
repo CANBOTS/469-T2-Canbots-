@@ -5,6 +5,9 @@ import SubpopulationsLib.DataProcessing as dp
 import sklearn.metrics as metrics
 import scipy as sp
 import datetime
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import PolynomialFeatures
+from sklearn.linear_model import LinearRegression
 from SubpopulationsLib.Subpopulations import mixture_exponentials, mixture_SIR, find_theta_sa
 from SubpopulationsLib.Metrics import MAPE
 
@@ -15,12 +18,12 @@ from SubpopulationsLib.Metrics import MAPE
 def read_data(filename, start_date, end_date, country):
     S,I,R = dp.create_SIR_data(country, filename, './Data/UID_ISO_FIPS_LookUp_Table.csv', start_date, end_date)
     
-    indexes_weekly = np.arange(0,S.shape[0],7)
+    # indexes_weekly = np.arange(0,S.shape[0],7)
 
-    S = S[indexes_weekly]
-    I = I[indexes_weekly]
-    R = R[indexes_weekly]
-    data = R[1:]
+    # S = S[indexes_weekly]
+    # I = I[indexes_weekly]
+    # R = R[indexes_weekly]
+    data = I[1:]
     return data
 
 #function to get csv data for cases per country and date
@@ -35,12 +38,11 @@ def get_csv_data(start_date, end_date, country):
 def get_no_recovery_date(country):
     df = pd.read_csv('./Data/time_series_covid19_recovered_global.csv')
     df = df[df['Country/Region'] == country]
-    date = date_to_datetime('3/1/20')
-    print(df["3/1/20"].values[0])
+    df = df.groupby("Country/Region").sum()
+    date = date_to_datetime('9/1/20')
     while df[datetime_to_date(date)].values[0] >0:
         date += datetime.timedelta(days=1)
     #print recoveries of previous date
-    print(df[datetime_to_date(date - datetime.timedelta(days=1))].values[0])
     return date
 
 def datetime_to_date(date):
@@ -65,26 +67,31 @@ def date_to_datetime(date):
 def get_policy_data(start, end, country):
     df = pd.read_csv('./Data/face-covering-policies-covid.csv')
     df = df[df['Entity'] == country]
-    df = df[df['Date'] >= start]
-    df1 = df[df['Date'] <= end]
+    df = df[df['Date'] > start]
+    df1 = df[df['Date'] < end]
 
     
 
     
     df = pd.read_csv('./Data/stay-at-home-covid.csv')
     df = df[df['Entity'] == country]
-    df = df[df['Date'] >= start]
-    df2 = df[df['Date'] <= end]
+    df = df[df['Date'] > start]
+    df2 = df[df['Date'] < end]
+
+    df = pd.read_csv('./Data/school-closures-covid.csv')
+    df = df[df['Entity'] == country]
+    df = df[df['Date'] > start]
+    df3 = df[df['Date'] < end]
     
-    return (df1["facial_coverings"].to_numpy(),df2/["stay_home_requirements"].to_numpy())
+    return (df1["facial_coverings"].to_numpy(),df2["stay_home_requirements"].to_numpy(),df3["school_closures"].to_numpy())
 
 #create a function to plot the data using matplotlib
-def plot_data(data, country):
+def plot_data(data, country,label):
     #create a figure
 
     plt.figure()
     #plot the data
-    plt.plot(data)
+    plt.plot(data, label = label)
     plt.xlabel("Time (weeks)")
     plt.ylabel("Number of Infected people")
     plt.title("Number of Infected people over time in " + country)
@@ -122,7 +129,6 @@ def fit_sir_model(data):
     return y_hat_SIR
 
 def fit_gaussian_model(data, params):
-    
     bias = np.min(data)
     norm_I = data - bias
     T = len(norm_I)
@@ -150,9 +156,6 @@ def gaussian_params(data):
     return params_gaussian
 
 def forecast_gaussian(data, params, steps):
-
-
-
     bias = np.min(data)
     norm_I = data - bias
     T = len(norm_I)
@@ -161,20 +164,15 @@ def forecast_gaussian(data, params, steps):
         params= np.insert(params, 1,next_params[0])
         params= np.insert(params, 3,next_params[1])
         params= np.insert(params, 5,next_params[2])
-    
 
     y_hat_gaussian = mixture_exponentials(params, T) + bias
     
-
     for i in range(steps):
         c_T = len(y_hat_gaussian)
         new = mixture_exponentials(params, c_T + i) + bias
 
         y_hat_gaussian = np.append(y_hat_gaussian,[new[-1]])
     
-
-
-
     return y_hat_gaussian
     
 
@@ -210,32 +208,98 @@ def get_next_params(params):
     return mu, sigma, coef
 
 
+def linear_regression():
+    start_date = '2/28/20'
+    end_date = '8/5/21'
+    start = "2020-02-28"
+    end = "2021-08-05"
+    path = "./Data/"
+    countries = ["Canada", "Australia","New Zealand", "Italy", "Sweden"]
+    x = np.array([])
+    y = np.array([])
+    for country in countries:
+        data = read_data(path, start_date, end_date, country)
+        y = np.append(y, data)
+        face_policy = get_policy_data(start, end, country)[0]
+        home_policy = get_policy_data(start, end, country)[1]
+        school_policy = get_policy_data(start, end, country)[2]
+        
 
+        x1 = face_policy.reshape(-1,1)
+        x2 = home_policy.reshape(1,-1)
+        x3 = school_policy.reshape(1,-1)
+        
+        #print(np.concatenate((x1,x2.T), axis = 1))
 
-
-
+        if len(x)==0:
+            x = (np.concatenate((x1,x2.T), axis = 1))
+            x= np.concatenate((x,x3.T), axis = 1)
+        else:
+            temp = np.concatenate((x1,x2.T), axis = 1)
+            temp = np.concatenate((temp,x3.T), axis = 1)
+            x =np.append(x,temp,0)
+    poly = PolynomialFeatures(degree =5)
+    x = poly.fit_transform(x)
+    p = np.random.permutation(len(x))
+    x = x[p]
+    y = y[p]
+    size_x = len(x)
+    size_y = len(y)
+    x_train = x[:-size_x//5]
+    x_test = x[-size_x//5:]
+    y_train = y[:-size_y//5]
+    y_test = y[-size_y//5:]
     
+
+    # x_train = poly.fit_transform(x_train)
+    # x_test = poly.fit_transform(x_test)
+
+    model = LinearRegression().fit(x_train, y_train)
+    print(model.score(x_test,y_test))
+    print(model.score(x_train,y_train))
+
+    model = LinearRegression().fit(x, y)
+    print(model.score(x,y))
+    
+    
+
+        
+  
+
+
+
+        
+        
+       
+    
+
 
 
 
 def main():
     path = "./Data/"
-    start_date = '3/30/20'
-    end_date = '3/30/22'
+    start_date = '2/28/20'
+    end_date = '2/28/21'
     # start_date = '2020-07-30'
     # end_date = '2021-03-30'
-    end_date2 = '7/30/21'
-    country = 'Canada'
+    countries = ["Canada", "Australia","New Zealand", "Italy", "Sweden"]
+
+    for country in countries:
+        
+        data = read_data(path, start_date, end_date, country)
+        plt.plot(data, label= country)
+    plt.legend()
+    plt.show()
+    
+
+
     #policies = get_policy_data(start_date, end_date, country)
 
     #plt.plot(policies[0])
    # plt.plot(policies[1])
 
-    data = read_data(path, start_date, end_date, country)
     # data2 = read_data(path, start_date, end_date2, country)
 
-    plot = plot_data(data, country)
-    plot.show()
     # plot.plot(data2, color = 'green')
     # peaks, num_peaks = get_peaks(data)
     # #sir = fit_sir_model(data)
@@ -252,6 +316,6 @@ def main():
     # #plot.plot(peaks, data[peaks], 'bo')
     # plot.show()
 
+linear_regression()
 
     
-print(get_no_recovery_date('Canada'))
