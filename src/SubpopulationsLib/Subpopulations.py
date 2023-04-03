@@ -71,10 +71,9 @@ def mse_dual_annealing(params, T, y, mixture_fun):
 		and a mixture of signals of time T.
 	'''
 	y_hat = mixture_fun(params, T)
-	error = y - y_hat
-	MSE = np.dot(error, error)
-	
-	return MSE
+	mse = ((y - y_hat)**2)
+	mse = sum(mse)/len(mse)
+	return mse
 
 def regularized_mse(theta, D, x, lambda_reg=0, W=None):
 	'''
