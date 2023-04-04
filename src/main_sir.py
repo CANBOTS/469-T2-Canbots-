@@ -469,61 +469,220 @@ def get_dates(start_date, end_date, train_size=0.8):
 
     return train_dates, test_dates
 
+class SIR_multi:
+
+    def __init__(self, n_subpops, beta, gamma, S0, I0, R0):
+        self.n_subpops = n_subpops
+        self.beta = beta
+        self.gamma = gamma
+        self.S = S0
+        self.I = I0
+        self.R = R0
+
+    def step(self):
+        new_I = np.zeros(self.n_subpops)
+        new_R = np.zeros(self.n_subpops)
+        for i in range(self.n_subpops):
+            new_I[i] = self.beta[i] * np.dot(self.S, self.I[i])
+            new_R[i] = self.gamma[i] * self.I[i]
+
+        for i in range(self.n_subpops):
+            self.S[i] -= new_I[i]
+            self.I[i] += new_I[i] - new_R[i]
+            self.R[i] += new_R[i]
+
+
+    def simulate(self, num_steps, data=None):
+        S = [self.S]
+        I = [self.I]
+        R = [self.R]
+        if data is None:
+            data = np.zeros((self.n_subpops,num_steps))
+            data[:,0] = self.I
+
+        for i in range(num_steps):
+            self.I = data[:,i]
+            self.step()
+            S.append(self.S)
+            I.append(self.I)
+            R.append(self.R)
+
+        return np.array(S), np.array(I), np.array(R)
+
+
+
+class SfIR:
+
+    def __init__(self, S0, f0, I0, R0, H0, D0, N0, mu, nu, gamma, alpha, delta, epsilon, rho, kappa, D):
+        # Set initial conditions
+        self.S = S0
+        self.f = f0
+        self.I = I0
+        self.R = R0
+        self.H = H0
+        self.D = D0
+        self.N = N0
+        self.mu = mu
+        self.nu = nu
+        self.gamma = gamma
+        self.alpha = alpha
+        self.delta = delta
+        self.epsilon = epsilon
+        self.rho = rho
+        self.kappa = kappa
+        self.D = D
+        self.num_subpops = D.shape[0]
+
+
+    def step(self, dt):
+        p = np.random.uniform(size = self.num_subpops)
+        SfI = self.D @ np.array([self.S, self.f, self.I])
+        fI = np.sum(SfI[1:])
+        V = self.kappa * (self.N - np.sum(SfI))
+
+        dSdt = self.mu * (self.N - self.S) - (1-p) * SfI[0] * fI / self.N - self.rho * self.S
+        dfdt = (1- self.mu) * V - self.kappa * self.f - self.epsilon * self.f
+        dIdt = (1 - self.alpha) * self.gamma * fI - (1 - self.alpha) * self.delta * self.I - self.alpha * self.H
+        dRdt = self.gamma * (1 - self.alpha) * self.I
+        dHdt = self.alpha * self.gamma * self.I - self.epsilon * self.H
+        dDdt = self.rho * self.S + self.delta * (1 - self.alpha) * self.I + self.epsilon * self.f + self.epsilon * self.H
+
+        self.S += dSdt * dt
+        self.f += dfdt * dt
+        self.I += dIdt * dt
+        self.R += dRdt * dt
+        self.H += dHdt * dt
+        self.D += dDdt * dt
+
+    def run(self, t_end, dt):
+        ts = [0]
+        Ss = [self.S]
+        fs = [self.f]
+        Is = [self.I]
+        Rs = [self.R]
+        Hs = [self.H]
+        Ds = [self.D]
+
+        while ts[-1] < t_end:
+            self.step(dt)
+
+            ts.append(ts[-1] + dt)
+            Ss.append(self.S)
+            fs.append(self.f)
+            Is.append(self.I)
+            Rs.append(self.R)
+            Hs.append(self.H)
+            Ds.append(self.D)
+
+        return ts, Ss, fs, Is, Rs, Hs, Ds
+
+
+    @staticmethod
+    def from_data(data, N, mu, nu, gamma, alpha, delta, epsilon, rho, kappa, D):
+        ts, Is, Rs, Hs, Ds = data
+
+        I0 = Is[0]
+        R0 = Rs[0]
+        H0 = Hs[0]
+        D0 = Ds[0]
+        S0 = N - I0 - R0 - H0 - D0
+        f0 = 0
+
+        SIR = S0 + I0 + R0
+        SIRH = SIR + H0
+        SIRHD = SIRH + D0
+
+        f_star = (SIRH - SIR * np.exp(-kappa * ts[-1])) / (SIRHD - SIRH * np.exp(-kappa * ts[-1]))
+
+        f0 = np.array([f_star] * D.shape[0])
+
+        return SfIR(S0, f0, I0, R0, H0, D0, N, mu, nu, gamma, alpha, delta, epsilon, rho, kappa, D)
+
+    def simulate(self, t):
+
+        Is = np.zeros(len(t))
+        Rs = np.zeros(len(t))
+        Hs = np.zeros(len(t))
+        Ds = np.zeros(len(t))
+
+        Is[0] = self.I
+        Rs[0] = self.R
+        Hs[0] = self.H
+        Ds[0] = self.D
+        
+        for i in range(1, len(t)):
+            dt = t[i] - t[i-1]
+
+            dSdt = -self.mu * self.S
+            dfdt = self.mu * self.S - self.nu * self.f
+            dIdt = (1 - self.alpha) * self.rho * self.f - (self.gamma + self.kappa + self.epsilon) * self.I
+            dRdt = self.gamma * self.I
+            dHdt = self.alpha * self.rho * self.f - (self.delta * self.H)
+            dDdt = self.epsilon * self.I + self.delta * self.H
+
+            self.S += dSdt * dt
+            self.f += dfdt * dt
+            self.I += dIdt * dt
+            self.R += dRdt * dt
+            self.H += dHdt * dt
+            self.D += dDdt * dt
+
+
+            self.S = max(self.S, 0)
+            self.f = max(self.f, 0)
+            self.I = max(self.I, 0)
+            self.R = max(self.R, 0)
+            self.H = max(self.H, 0)
+            self.D = max(self.D, 0)
+
+            Is[i] = self.I
+            Rs[i] = self.R
+            Hs[i] = self.H
+            Ds[i] = self.D
+
+            return np.column_stack((t, Is, Rs, Hs, Ds))
+
 
 
 def main():
 
-    path = "./Data/"
+    N = 1000000
+    mu = 0.0001
+    nu = 0.0001
+    gamma = 0.1
+    alpha = 0.1
+    delta = 0.1
+    epsilon = 0.1
+    rho = 0.1
+    kappa = 0.1
+    D = np.array([0.1, 0.1, 0.1, 0.1, 0.1])
 
-    start_date = '2/28/20'
-    end_date = '2/28/21'
-    country = "Canada"
+    I0 = 100
+    R0 = 0
+    H0 = 0
+    D0 = 0
+    S0 = N - I0 - R0 - H0 - D0
+    f0 = 0
 
-    # Read the data
-    data = read_data(path, start_date, end_date, country)
+    t = np.linspace(0, 100, 1000)
+    data = [t, np.zeros(len(t)), np.zeros(len(t)), np.zeros(len(t)), np.zeros(len(t))]
 
-    # Split the data into train and test
-    train_data, test_data = split_data(data)
+    model = SfIR(S0, f0, I0, R0, H0, D0, N, mu, nu, gamma, alpha, delta, epsilon, rho, kappa, D)
 
-    # Split the dates into train and test
-    train_dates, test_dates = get_dates(start_date, end_date)
+    results = model.simulate(t)
+    Is, Rs, Hs, Dcs = results[:,0], results[:,1], results[:,2], results[:,3]
 
-    model = GaussianMixtureModel()
-
-    # Get the parameters
-    params = model.get_params(train_data)
-
-    # Fit the model
-    model.fit(train_data, params)
-
-    # Make the features
-    features = make_features(train_data, country, train_dates)
-
-    poly = PolynomialFeatures(degree=2)
-
-    # Transform the features
-    x = poly.fit_transform(features)
-    x_shape = x.shape
-
-    # Get the labels
-    y = train_data.reshape(-1,1)
-
-    x = x.reshape(y.shape[0], x_shape[1])
-    
-
-    print(y.shape)
-    print(x.shape)
-
-    # Fit the model
-    fitted = LinearRegression().fit(x, y)
-
-    # Get the score
-    print(fitted.score(x, y))
+    plt.plot(t, Is, label='I')
+    plt.plot(t, Rs, label='R')
+    plt.plot(t, Hs, label='H')
+    plt.plot(t, Dcs, label='D')
+    plt.legend()
+    plt.show()
 
 
 
-
-main()
+if __name__ == "__main__":
+    main()
 
 
 

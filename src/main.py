@@ -44,6 +44,7 @@ def plot_data(data, country):
     plt.ylabel("Number of Infected people")
     plt.title("Number of Infected people over time in " + country)
     return plt
+
 #method which returns the peaks of the data
 def get_peaks(data):
     smoothed_data =  sp.signal.savgol_filter(data, len(data)//2,5)
@@ -186,6 +187,9 @@ def get_next_params(params):
     coef = params[2]
 
     return mu, sigma, coef
+
+
+)
 
 
 
