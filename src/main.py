@@ -8,8 +8,24 @@ import datetime
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import PolynomialFeatures
 from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import RobustScaler
+from sklearn.preprocessing import MaxAbsScaler
+from sklearn.neural_network import MLPRegressor
+from sklearn.neural_network import MLPClassifier
+from sklearn.model_selection import train_test_split
 from SubpopulationsLib.Subpopulations import mixture_exponentials, mixture_SIR, find_theta_sa
+
 from SubpopulationsLib.Metrics import MAPE
+from tensorflow.python.keras.models import Sequential
+from tensorflow.python.keras import Input
+from tensorflow.python.keras.layers import Conv2D
+from tensorflow.python.keras.layers import MaxPool2D
+from tensorflow.python.keras.layers import Flatten
+from tensorflow.python.keras.layers import Dropout
+from tensorflow.python.keras.layers import Dense
+
 
 
 
@@ -19,11 +35,16 @@ def read_data(filename, start_date, end_date, country):
     S,I,R = dp.create_SIR_data(country, filename, './Data/UID_ISO_FIPS_LookUp_Table.csv', start_date, end_date)
     
     indexes_weekly = np.arange(0,S.shape[0],7)
+    
 
     S = S[indexes_weekly]
     I = I[indexes_weekly]
     R = R[indexes_weekly]
-    data = I[1:]
+    data = I
+    return data
+def data_daily(filename, start_date, end_date, country):
+    S,I,R = dp.create_SIR_data(country, filename, './Data/UID_ISO_FIPS_LookUp_Table.csv', start_date, end_date)
+    data = I
     return data
 
 #function to get csv data for cases per country and date
@@ -48,6 +69,15 @@ def get_no_recovery_date(country):
         date += datetime.timedelta(days=1)
     #print recoveries of previous date
     return date
+def population_density(country):
+    df = pd.read_csv('./Data/population_density.csv')
+    df = df[df['Country Name'] == country]
+    return df["2020"].values[0]
+
+def urban(country):
+    df = pd.read_csv('./Data/urban_population.csv')
+    df = df[df['Country Name'] == country]
+    return df["2020"].values[0]
 def population(country):
     df = pd.read_csv('./Data/world_population.csv')
     df = df[df['Country/Territory'] == country]
@@ -77,7 +107,7 @@ def date_to_datetime(date):
 def get_policy_data(start, end, country):
     df = pd.read_csv('./Data/face-covering-policies-covid.csv')
     df = df[df['Entity'] == country]
-    df = df[df['Date'] > start]
+    df = df[df['Date'] >= start]
     df1 = df[df['Date'] < end]
 
     
@@ -85,12 +115,12 @@ def get_policy_data(start, end, country):
     
     df = pd.read_csv('./Data/stay-at-home-covid.csv')
     df = df[df['Entity'] == country]
-    df = df[df['Date'] > start]
+    df = df[df['Date'] >= start]
     df2 = df[df['Date'] < end]
 
     df = pd.read_csv('./Data/school-closures-covid.csv')
     df = df[df['Entity'] == country]
-    df = df[df['Date'] > start]
+    df = df[df['Date'] >= start]
     df3 = df[df['Date'] < end]
     
     return (df1["facial_coverings"].to_numpy(),df2["stay_home_requirements"].to_numpy(),df3["school_closures"].to_numpy())
@@ -108,7 +138,7 @@ def plot_data(data, country,label):
     return plt
 #method which returns the peaks of the data
 def get_peaks(data):
-    smoothed_data =  sp.signal.savgol_filter(data, len(data)//2,5)
+    smoothed_data =  sp.signal.savgol_filter(data, len(data)//2,4)
     peaks = sp.signal.find_peaks(smoothed_data)[0]
 
     if len(peaks) == 0:
@@ -141,16 +171,17 @@ def fit_sir_model(data):
 def fit_gaussian_model(data, params):
     bias = np.min(data)
     norm_I = data - bias
-    T = len(norm_I)
+    T = len(norm_I)+12
     y_hat_gaussian = mixture_exponentials(params, T) + bias
     
     return y_hat_gaussian
 
 def gaussian_params(data):
     num_mixtures = get_peaks(data)[1]
+    print(num_mixtures)
     bounds_mu = (0,50)
     bounds_sigma = (1,6)
-    bounds_coef = (0,300000)
+    bounds_coef = (0,1500000)
 
     bound_list_Gaussian = [bounds_mu, bounds_sigma, bounds_coef]
 
@@ -170,12 +201,22 @@ def forecast_gaussian( data, params, steps, start_date, country):
     norm_I = data - bias
     T = len(norm_I)
     if tail_peak(data):
+        print("woooo")
+        
+        
         next_params = get_next_params(start_date, params, country)
-        params= np.insert(params, 1,next_params[0])
-        params= np.insert(params, 3,next_params[1])
-        params= np.insert(params, 5,next_params[2])
-    print(params)
-
+        if len(params) == 3: #one previous gaussian
+            params= np.insert(params, 1,next_params[0])
+            params= np.insert(params, 3,next_params[1])
+            params= np.insert(params, 5,next_params[2])
+        elif len(params) == 6: #two previous gaussians
+            params= np.insert(params, 2,next_params[0])
+            params= np.insert(params, 5,next_params[1])
+            params= np.insert(params, 8,next_params[2])
+        elif len(params) == 9: #three previous gaussians
+            params= np.insert(params, 3,next_params[0])
+            params= np.insert(params, 7,next_params[1])
+            params= np.insert(params, 11,next_params[2])
     y_hat_gaussian = mixture_exponentials(params, T) + bias
     
     for i in range(steps):
@@ -187,19 +228,25 @@ def forecast_gaussian( data, params, steps, start_date, country):
     return y_hat_gaussian
     
 
-def is_holdiday(date, country):
-    if country == "Canada":
-        holidays = {"01/01", "02/15", "04/02", "04/05", "05/24", "07/01", "08/02", "09/06", "10/11", "12/25"}
-    elif country == "United States":
-        holidays = {"01/01", "01/18", "02/15", "05/31", "07/05", "09/06", "10/11", "11/11", "11/25", "12/25"}
-    date = date[0:-2]+"20"+date[-2:] #converts date to format that datetime can read
-    date = datetime.datetime.strptime(date, "%m/%d/%Y")
-    #check if there is a holday within two weeks after the date
-    for i in range(1,15):
-        if date.strftime("%m/%d") in holidays:
-            return True
-        date += datetime.timedelta(days=1)
-    return False
+
+def plot_gaussians(params,data):
+    adder = len(params)//3
+    for i in range(adder):
+        new_params = (params[i], params[i+adder], params[i+adder*2])
+        print(new_params)
+        plt.plot(fit_gaussian_model(data, new_params), label = "Gaussian " + str(i+1))
+
+# def is_holdiday(date, country):
+#     #get the holidays for the country
+#     holidays = get_holidays(country)
+#     date = date[0:-2]+"20"+date[-2:] #converts date to format that datetime can read
+#     date = datetime.datetime.strptime(date, "%m/%d/%Y")
+#     #check if there is a holday within two weeks after the date
+#     for i in range(1,15):
+#         if date.strftime("%m/%d") in holidays:
+#             return True
+#         date += datetime.timedelta(days=1)
+#     return False
 
 #function to determine whether the end of the data set is a peak
 def tail_peak(data):
@@ -212,16 +259,29 @@ def tail_peak(data):
 
 #function to train a model to get the parameters for the next gaussian model based on the paramters of the previous gaussian curve
 def get_next_params(start_date, params, country):
+
+    if len(params) ==6:
+        means = [params[0],params[1]]
+        i = means.index(max(means))
+        params = (params[i],params[i+2],params[i+4])
+    elif len(params) ==9:
+        means = [params[0],params[1],params[2]]
+        i = means.index(max(means))
+        params = (params[i],params[i+3],params[i+6])
+
     mu = params[0] + 18 #assume that the next peak will be 18 weeks after the previous peak
 
-    sigma = params[1] -1 #assume that the next peak will have the same standard deviation as the previous peak
+    sigma = params[1]*0.75 #assume that the next peak will have the same standard deviation as the previous peak
 
     #convert start_date to a datetime object
     start_date = date_to_datetime(start_date)
     mu_date = start_date + datetime.timedelta(days=mu*7) #convert the number of weeks to a date
     model = linear_regression()
-    feautures = get_regression_features(mu_date, country)
+    feautures = get_feautures(mu_date, country)
     coef = model.predict(feautures)
+
+    # if len(params)>0:
+    #     coef = params[2]
 
     
 
@@ -229,8 +289,7 @@ def get_next_params(start_date, params, country):
 
 
 
-    return mu, sigma, coef
-def get_regression_features(date, country):
+def get_feautures(date, country):
     #format the date as a datetime object
     #date = datetime.datetime.strptime(date, "%Y-%m-%d")
     start = date-datetime.timedelta(days=1) 
@@ -243,48 +302,41 @@ def get_regression_features(date, country):
     features = get_policy_data(start,end, country)
     x = np.array([])
     for feature in features:
-        x = np.append(x,feature)
+        x = np.append(x,feature[0])
     
-    x = np.append(x,population(country))
+    x = np.append(x,population_density(country))
+    x = np.append(x, urban(country))
+    print(x)
     poly = PolynomialFeatures(degree =5)
     
     x = poly.fit_transform([x])
     return x
     
 
-
-def linear_regression():
+def get_x_y():
     start_date = '2/28/20'
     end_date = '8/5/21'
     start = "2020-02-28"
     end = "2021-08-05"
     path = "./Data/"
-    countries = ["Canada","Italy","United Kingdom","Japan","Germany","France","Australia","New Zealand","US","China"]
+    countries = ["Canada", "Australia","New Zealand", "Italy", "Sweden", "United Kingdom","China"]
     x = np.array([])
     y = np.array([])
     for country in countries:
         #data = get_csv_data(country, start, end)
-        data = read_data(path, start_date, end_date, country)
+        data = data_daily(path, start_date, end_date, country)
         y = np.append(y, data)
         face_policy = get_policy_data(start, end, country)[0]
         home_policy = get_policy_data(start, end, country)[1]
         school_policy = get_policy_data(start, end, country)[2]
-        pop = population(country)*np.ones(len(data))
-        indexes_weekly = np.arange(0,face_policy.shape[0],7)
-        face_policy = face_policy[indexes_weekly]
-        home_policy = home_policy[indexes_weekly]
-        school_policy = school_policy[indexes_weekly]
-
-        #remove last index from each
-        face_policy = face_policy[:-1]
-        home_policy = home_policy[:-1]
-        school_policy = school_policy[:-1]
-        
+        pop = population_density(country)*np.ones(len(data))
+        urban_pop = urban(country)*np.ones(len(data))
 
         x1 = face_policy.reshape(-1,1)
         x2 = home_policy.reshape(-1,1)
         x3 = school_policy.reshape(-1,1)
         x4 = pop.reshape(-1,1)
+        x5 = urban_pop.reshape(-1,1)
         
         #print(np.concatenate((x1,x2.T), axis = 1))
 
@@ -292,35 +344,41 @@ def linear_regression():
             x = (np.concatenate((x1,x2), axis = 1))
             x= np.concatenate((x,x3), axis = 1)
             x = np.concatenate((x,x4), axis = 1)
+            x = np.concatenate((x,x5), axis = 1)
             
         else:
             temp = np.concatenate((x1,x2), axis = 1)
             temp = np.concatenate((temp,x3), axis = 1)
             temp = np.concatenate((temp,x4), axis = 1)
+            temp = np.concatenate((temp,x5), axis = 1)
             x =np.append(x,temp,0)
-        
+    
+    return x,y
+
+
+
+
+def linear_regression():
+    
+    x,y = get_x_y()
+    #shuffle the data
+  
+
     poly = PolynomialFeatures(degree =5)
     x = poly.fit_transform(x)
-    p = np.random.permutation(len(x))
-    x = x[p]
-    y = y[p]
-    size_x = len(x)
-    size_y = len(y)
-    x_train = x[:-size_x//5]
-    x_test = x[-size_x//5:]
-    y_train = y[:-size_y//5]
-    y_test = y[-size_y//5:]
+    
+    x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2)
     
 
     # x_train = poly.fit_transform(x_train)
     # x_test = poly.fit_transform(x_test)
-
     model = LinearRegression().fit(x_train, y_train)
     print(model.score(x_test,y_test))
-
     model = LinearRegression().fit(x, y)
     print(model.score(x,y))
     return model
+
+
     
     
 
@@ -328,11 +386,15 @@ def linear_regression():
 
 def main():
     path = "./Data/"
+    # start_date = '3/15/20'
+    # end_date = '1/15/21'
+    # end_date2 = '3/15/21'
+    # # start_date = '2020-02-27'
+    # # end_date = '2021-08-05'
+    # country = 'Italy'
     start_date = '7/30/20'
-    end_date = '3/28/21'
+    end_date = '4/20/21'
     end_date2 = '7/30/21'
-    # start_date = '2020-02-27'
-    # end_date = '2021-08-05'
     country = 'Canada'
     
     
@@ -344,28 +406,36 @@ def main():
    # plt.plot(policies[1])
 
     data = read_data(path, start_date, end_date, country)
+
     data2 = read_data(path, start_date, end_date2, country)
 
-    plot = plot_data(data, country,"data")
-    #plot.plot(data2, color = 'green')
+    #plot = plot_data(data2, country,"data")
+    plt.plot(data, color = 'blue')
+    plt.plot(data2, color = 'green')
     peaks, num_peaks = get_peaks(data)
     #sir = fit_sir_model(data)
     g_params = gaussian_params(data)
     
-    gaussian = forecast_gaussian(data, g_params,12,start_date, country)
+    gaussian = forecast_gaussian(data, g_params,10,start_date, country)
+    #gaussian = fit_gaussian_model(data2, g_params)
 
-    plot.plot(gaussian, color = 'red')
-    plot.show()
+    plt.plot(gaussian, color = 'red')
+    
     # #print("Gaussian MAPE: ", MAPE(data, gaussian))
     # #print("SIR MSE: ", mse(data, sir))    
  
     # # # print("SIR MAPE: ", MAPE(data, sir))    
     # #plot.plot(sir, color = 'green')
-    # #plot.plot(peaks, data[peaks], 'bo')
-    # plot.show()
+    #plot.plot(peaks, data[peaks], 'bo')
+    plt.legend()
+    plt.show()
+# print("regression")
 #linear_regression()
 main()
+#print(population("US"))
+# print("neural")
+# neural_net()
 #print(get_csv_data("Canada", "2020-02-28", "2021-08-05"))
-#print(get_regression_features("2020-06-28", "Canada"))
+#print(get_feautures("2020-06-28", "Canada"))
 
     
