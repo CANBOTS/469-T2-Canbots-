@@ -1,0 +1,71 @@
+def neural_net():
+    x,y = get_x_y()
+    poly = PolynomialFeatures(degree =5)
+    x = poly.fit_transform(x)
+    x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2, random_state=42)
+    print(x_train.shape)
+    #implement tensorflow neural network
+    model = Sequential()
+    model.add(Input(shape=(x_train.shape[1],)))
+    model.add(Dense(128, activation='relu'))
+    model.add(Dense(128, activation='relu'))
+    model.add(Dense(128, activation='relu'))
+    model.compile(optimizer='adam', loss='mse', metrics=['accuracy'])
+    model.fit(x_train, y_train, epochs=50, batch_size= 64, validation_split = 0.2)
+    print(model.evaluate(x_train,y_train))
+    print(model.evaluate(x_test,y_test))
+
+def linear_regression2():
+    start_date = '2/28/20'
+    end_date = '8/5/21'
+    start = "2020-02-28"
+    end = "2021-08-05"
+    path = "./Data/"
+    countries = ["Canada", "Australia","New Zealand", "Italy", "Sweden", "United Kingdom"]
+    x = np.array([])
+    y = np.array([])
+    for country in countries:
+        data = read_data(path, start_date, end_date, country)
+        y = np.append(y, data)
+        face_policy = get_policy_data(start, end, country)[0]
+        home_policy = get_policy_data(start, end, country)[1]
+        school_policy = get_policy_data(start, end, country)[2]
+        pop = population(country)*np.ones(len(data))
+
+        indexes_weekly = np.arange(0,face_policy.shape[0],7)
+        
+        face_policy = face_policy[indexes_weekly]
+        home_policy = home_policy[indexes_weekly]
+        school_policy = school_policy[indexes_weekly]
+        
+
+        
+
+        x1 = face_policy.reshape(-1,1)
+        x2 = home_policy.reshape(-1,1)
+        x3 = school_policy.reshape(-1,1)
+        
+        #print(np.concatenate((x1,x2.T), axis = 1))
+
+        if len(x)==0:
+            x = (np.concatenate((x1,x2), axis = 1))
+            x= np.concatenate((x,x3), axis = 1)
+        else:
+            temp = np.concatenate((x1,x2), axis = 1)
+            temp = np.concatenate((temp,x3), axis = 1)
+            x =np.append(x,temp,0)
+
+    poly = PolynomialFeatures(degree =5)
+    x = poly.fit_transform(x)
+    x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2, random_state=42)
+
+    # x_train = poly.fit_transform(x_train)
+    # x_test = poly.fit_transform(x_test)
+
+    model = LinearRegression().fit(x_train, y_train)
+    print(model.score(x_test,y_test))
+    print(model.score(x_train,y_train))
+
+    model = LinearRegression().fit(x, y)
+    print(model.score(x,y))
+    
