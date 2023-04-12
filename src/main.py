@@ -8,23 +8,13 @@ import datetime
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import PolynomialFeatures
 from sklearn.linear_model import LinearRegression
-from sklearn.preprocessing import StandardScaler
-from sklearn.preprocessing import MinMaxScaler
-from sklearn.preprocessing import RobustScaler
-from sklearn.preprocessing import MaxAbsScaler
-from sklearn.neural_network import MLPRegressor
-from sklearn.neural_network import MLPClassifier
+
 from sklearn.model_selection import train_test_split
+
 from SubpopulationsLib.Subpopulations import mixture_exponentials, mixture_SIR, find_theta_sa
 
 from SubpopulationsLib.Metrics import MAPE
-from tensorflow.python.keras.models import Sequential
-from tensorflow.python.keras import Input
-from tensorflow.python.keras.layers import Conv2D
-from tensorflow.python.keras.layers import MaxPool2D
-from tensorflow.python.keras.layers import Flatten
-from tensorflow.python.keras.layers import Dropout
-from tensorflow.python.keras.layers import Dense
+
 
 
 
@@ -138,7 +128,7 @@ def plot_data(data, country,label):
     return plt
 #method which returns the peaks of the data
 def get_peaks(data):
-    smoothed_data =  sp.signal.savgol_filter(data, len(data)//2,4)
+    smoothed_data =  sp.signal.savgol_filter(data, len(data)//2,7)
     peaks = sp.signal.find_peaks(smoothed_data)[0]
 
     if len(peaks) == 0:
@@ -152,7 +142,7 @@ def fit_sir_model(data):
     bound_beta = (0,1)
     bound_gamma = (0,1)
     bound_coef = (0,1000)
-    bound_k = (0,50)
+    bound_k = (0,40)
     bound_list_SIR = [bound_S, bound_beta, bound_gamma, bound_coef, bound_k]
 
     bounds_SIR = list()
@@ -171,15 +161,15 @@ def fit_sir_model(data):
 def fit_gaussian_model(data, params):
     bias = np.min(data)
     norm_I = data - bias
-    T = len(norm_I)+12
+    T = len(norm_I)+4
     y_hat_gaussian = mixture_exponentials(params, T) + bias
     
     return y_hat_gaussian
 
 def gaussian_params(data):
     num_mixtures = get_peaks(data)[1]
-    print(num_mixtures)
-    bounds_mu = (0,50)
+    #print(num_mixtures)
+    bounds_mu = (0,40)
     bounds_sigma = (1,6)
     bounds_coef = (0,1500000)
 
@@ -196,29 +186,34 @@ def gaussian_params(data):
     params_gaussian = find_theta_sa(bounds_Gaussian, norm_I, mixture_exponentials) 
     return params_gaussian
 
-def forecast_gaussian( data, params, steps, start_date, country):
+def forecast_gaussian( data, params, steps, start_date, country,model):
     bias = np.min(data)
     norm_I = data - bias
     T = len(norm_I)
+    #print(params)
     if tail_peak(data):
-        print("woooo")
-        
-        
-        next_params = get_next_params(start_date, params, country)
-        if len(params) == 3: #one previous gaussian
-            params= np.insert(params, 1,next_params[0])
-            params= np.insert(params, 3,next_params[1])
-            params= np.insert(params, 5,next_params[2])
-        elif len(params) == 6: #two previous gaussians
-            params= np.insert(params, 2,next_params[0])
-            params= np.insert(params, 5,next_params[1])
-            params= np.insert(params, 8,next_params[2])
-        elif len(params) == 9: #three previous gaussians
-            params= np.insert(params, 3,next_params[0])
-            params= np.insert(params, 7,next_params[1])
-            params= np.insert(params, 11,next_params[2])
-    y_hat_gaussian = mixture_exponentials(params, T) + bias
     
+        # print("tail")
+        
+        
+        next_params = get_next_params(start_date, params, country,model)
+
+        if next_params:
+            if len(params) == 3: #one previous gaussian
+                params= np.insert(params, 1,next_params[0])
+                params= np.insert(params, 3,next_params[1])
+                params= np.insert(params, 5,next_params[2])
+            elif len(params) == 6: #two previous gaussians
+                params= np.insert(params, 2,next_params[0])
+                params= np.insert(params, 5,next_params[1])
+                params= np.insert(params, 8,next_params[2])
+            elif len(params) == 9: #three previous gaussians
+                params= np.insert(params, 3,next_params[0])
+                params= np.insert(params, 7,next_params[1])
+                params= np.insert(params, 11,next_params[2])
+    y_hat_gaussian = mixture_exponentials(params, T) + bias
+    # print(params)
+    # plot_gaussians(params, data)
     for i in range(steps):
         c_T = len(y_hat_gaussian)
         new = mixture_exponentials(params, c_T + i) + bias
@@ -233,7 +228,7 @@ def plot_gaussians(params,data):
     adder = len(params)//3
     for i in range(adder):
         new_params = (params[i], params[i+adder], params[i+adder*2])
-        print(new_params)
+        #print(new_params)
         plt.plot(fit_gaussian_model(data, new_params), label = "Gaussian " + str(i+1))
 
 # def is_holdiday(date, country):
@@ -257,8 +252,10 @@ def tail_peak(data):
             return 0
     return 1
 
+
+
 #function to train a model to get the parameters for the next gaussian model based on the paramters of the previous gaussian curve
-def get_next_params(start_date, params, country):
+def get_next_params(start_date, params, country,model):
 
     if len(params) ==6:
         means = [params[0],params[1]]
@@ -268,20 +265,23 @@ def get_next_params(start_date, params, country):
         means = [params[0],params[1],params[2]]
         i = means.index(max(means))
         params = (params[i],params[i+3],params[i+6])
+    if 45<params[0]<51:
+            
+            return False
+    mu = params[0] + 16 #assume that the next peak will be 18 weeks after the previous peak
+    
 
-    mu = params[0] + 18 #assume that the next peak will be 18 weeks after the previous peak
-
-    sigma = params[1]*0.75 #assume that the next peak will have the same standard deviation as the previous peak
+    sigma = params[1]*0.7 #assume that the next peak will have the same standard deviation as the previous peak
 
     #convert start_date to a datetime object
-    start_date = date_to_datetime(start_date)
-    mu_date = start_date + datetime.timedelta(days=mu*7) #convert the number of weeks to a date
-    model = linear_regression()
-    feautures = get_feautures(mu_date, country)
-    coef = model.predict(feautures)
+    # start_date = date_to_datetime(start_date)
+    # mu_date = start_date + datetime.timedelta(days=mu*7) #convert the number of weeks to a date
+    # modl = model
+    # feautures = get_feautures(mu_date, country)
+    # coef = modl.predict(feautures)
 
-    # if len(params)>0:
-    #     coef = params[2]
+    if len(params)>0:
+        coef = params[2]
 
     
 
@@ -306,7 +306,7 @@ def get_feautures(date, country):
     
     x = np.append(x,population_density(country))
     x = np.append(x, urban(country))
-    print(x)
+    #print(x)
     poly = PolynomialFeatures(degree =5)
     
     x = poly.fit_transform([x])
@@ -319,7 +319,7 @@ def get_x_y():
     start = "2020-02-28"
     end = "2021-08-05"
     path = "./Data/"
-    countries = ["Canada", "Australia","New Zealand", "Italy", "Sweden", "United Kingdom","China"]
+    countries = ["Canada", "Australia","New Zealand", "Italy", "Sweden", "United Kingdom","China","South Korea","Japan"]
     x = np.array([])
     y = np.array([])
     for country in countries:
@@ -386,16 +386,17 @@ def linear_regression():
 
 def main():
     path = "./Data/"
-    # start_date = '3/15/20'
-    # end_date = '1/15/21'
-    # end_date2 = '3/15/21'
+    # start_date = '3/30/20'
+    # end_date = '1/30/21'
+    # end_date2 = '3/30/21'
     # # start_date = '2020-02-27'
     # # end_date = '2021-08-05'
     # country = 'Italy'
     start_date = '7/30/20'
     end_date = '4/20/21'
-    end_date2 = '7/30/21'
-    country = 'Canada'
+    end_date2 = '5/20/21'
+    countries = ["Canada", "Australia", "Sweden", "United Kingdom","China","South Korea","Japan","Germany","Singapore"]
+    #country = "Mexico"
     
     
 
@@ -404,31 +405,126 @@ def main():
 
     #plt.plot(policies[0])
    # plt.plot(policies[1])
+    for_me = {}
+    model = 3
+    heights = {}
+    errors ={}
+    for country in countries:
+        data = read_data(path, start_date, end_date, country)
 
-    data = read_data(path, start_date, end_date, country)
-
-    data2 = read_data(path, start_date, end_date2, country)
-
+        data2 = read_data(path, start_date, end_date2, country)
+        mapes = []
+        for i in range(30):
+            print(country,i)
+            g_params = gaussian_params(data)
+            gaussian = forecast_gaussian(data, g_params,4,start_date, country, model)
+            mape = MAPE(data2[-4:], gaussian[-4:])[0]
+            mapes.append(mape)
+        interval = sp.stats.t.interval(confidence=0.95,
+              df=len(mapes)-1,
+              loc=np.mean(mapes), 
+              scale=sp.stats.sem(mapes))
+        heights[country] = interval[1]-interval[0]
+        errors[country] = np.mean(mapes)
+        for_me[country] = mapes
+    plt.bar(errors.keys(), errors.values(), yerr = heights.values(), color='g')
+    plt.title("MAPE assuming previous magnitude")
+    plt.ylabel("MAPE")
+    plt.xlabel("Country")
+    plt.ylim((0,100))
+    print(for_me)
     #plot = plot_data(data2, country,"data")
-    plt.plot(data, color = 'blue')
-    plt.plot(data2, color = 'green')
+    # plt.plot(data, color = 'blue')
+    #plt.plot(data2, color = 'green')
     peaks, num_peaks = get_peaks(data)
+    #print(num_peaks)
     #sir = fit_sir_model(data)
-    g_params = gaussian_params(data)
     
-    gaussian = forecast_gaussian(data, g_params,10,start_date, country)
-    #gaussian = fit_gaussian_model(data2, g_params)
+    
+    
+    #gaussian = fit_gaussian_model(data, g_params)
 
-    plt.plot(gaussian, color = 'red')
+    #plt.plot(gaussian, color = 'red')
+    # plt.legend()
+    plt.show()
     
-    # #print("Gaussian MAPE: ", MAPE(data, gaussian))
+    #print("Gaussian MAPE: ", MAPE(data2, gaussian))
     # #print("SIR MSE: ", mse(data, sir))    
  
     # # # print("SIR MAPE: ", MAPE(data, sir))    
     # #plot.plot(sir, color = 'green')
     #plot.plot(peaks, data[peaks], 'bo')
+
+def main2():
+    path = "./Data/"
+    # start_date = '3/30/20'
+    # end_date = '1/30/21'
+    # end_date2 = '3/30/21'
+    # # start_date = '2020-02-27'
+    # # end_date = '2021-08-05'
+    # country = 'Italy'
+    start_date = '7/30/20'
+    end_date = '4/20/21'
+    end_date2 = '5/20/21'
+    country = "Singapore"
+    
+    
+
+
+    #policies = get_policy_data(start_date, end_date, country)
+
+    #plt.plot(policies[0])
+   # plt.plot(policies[1])
+    model = linear_regression()
+    
+    data = read_data(path, start_date, end_date, country)
+
+    data2 = read_data(path, start_date, end_date2, country)
+       
+    g_params = gaussian_params(data)
+    gaussian = forecast_gaussian(data, g_params,4,start_date, country, model)
+
+    plt.plot(data, color = 'blue')
+    plt.plot(data2, color = 'green')
+    peaks, num_peaks = get_peaks(data)
+    print(num_peaks)
+    #sir = fit_sir_model(data)
+    
+    
+    
+    #gaussian = fit_gaussian_model(data, g_params)
+
+    plt.plot(gaussian, color = 'red')
+    # plt.legend()
+    plt.show()
+    
+    print("Gaussian MAPE: ", MAPE(data2, gaussian))
+    # #print("SIR MSE: ", mse(data, sir))    
+ 
+    # # # print("SIR MAPE: ", MAPE(data, sir))    
+    # #plot.plot(sir, color = 'green')
+    #plot.plot(peaks, data[peaks], 'bo')
+def graphics():
+    path = "./Data/"
+   
+    start_date = '7/30/20'
+    end_date = '4/15/21'
+    country = "Japan"
+    data = read_data(path, start_date, end_date, country)
+    smoothed_data =  sp.signal.savgol_filter(data, len(data)//2,5)
+    plt.plot(data, color = 'blue',label = "Unsmoothed Data")
+    plt.plot(smoothed_data, color = 'red', label = "Smoothed Data")
+    peaks, num_peaks = get_peaks(data)
+
+    plt.plot(peaks, data[peaks], 'bo', color = "green")
+
     plt.legend()
     plt.show()
+
+
+
+
+#graphics()
 # print("regression")
 #linear_regression()
 main()
