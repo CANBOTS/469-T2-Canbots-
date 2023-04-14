@@ -15,12 +15,7 @@ from SubpopulationsLib.Subpopulations import mixture_exponentials, mixture_SIR, 
 
 from SubpopulationsLib.Metrics import MAPE
 
-
-
-
-
-
-#create a function to read the data from the csv file
+#function to get the weekly infections for a coutnrty given a start and end date
 def read_data(filename, start_date, end_date, country):
     S,I,R = dp.create_SIR_data(country, filename, './Data/UID_ISO_FIPS_LookUp_Table.csv', start_date, end_date)
     
@@ -32,12 +27,14 @@ def read_data(filename, start_date, end_date, country):
     R = R[indexes_weekly]
     data = I
     return data
+
+#function to get daily infeted cases, used for the regression model
 def data_daily(filename, start_date, end_date, country):
     S,I,R = dp.create_SIR_data(country, filename, './Data/UID_ISO_FIPS_LookUp_Table.csv', start_date, end_date)
     data = I
     return data
 
-#function to get csv data for cases per country and date
+#function to get csv data for cases per country and date, Not being used 
 def get_csv_data(country,start_date, end_date):
     df = pd.read_csv('./Data/WHO-COVID-19-global-data.csv')
     df = df[df['Country'] == country]
@@ -49,7 +46,7 @@ def get_csv_data(country,start_date, end_date):
     
     return cases
 
-
+#returns the last day that there were no recoveries reported for a country
 def get_no_recovery_date(country):
     df = pd.read_csv('./Data/time_series_covid19_recovered_global.csv')
     df = df[df['Country/Region'] == country]
@@ -59,20 +56,26 @@ def get_no_recovery_date(country):
         date += datetime.timedelta(days=1)
     #print recoveries of previous date
     return date
+
+#returns population density of a country
 def population_density(country):
     df = pd.read_csv('./Data/population_density.csv')
     df = df[df['Country Name'] == country]
     return df["2020"].values[0]
 
+#returns urban population proportion of a country
 def urban(country):
     df = pd.read_csv('./Data/urban_population.csv')
     df = df[df['Country Name'] == country]
     return df["2020"].values[0]
+
+#returns population of a country
 def population(country):
     df = pd.read_csv('./Data/world_population.csv')
     df = df[df['Country/Territory'] == country]
     return df["2020 Population"].values[0]
 
+#converts datetime to date for the csv files
 def datetime_to_date(date):
     date = date.strftime("%m/%d/%Y")
     if date[0] == "0":
@@ -86,7 +89,7 @@ def datetime_to_date(date):
     return date
 
 
-
+#converts date to datetime for the csv files
 def date_to_datetime(date):
     date = date[0:-2]+"20"+date[-2:] #converts date to format that datetime can read
     date = datetime.datetime.strptime(date, "%m/%d/%Y")
@@ -100,9 +103,6 @@ def get_policy_data(start, end, country):
     df = df[df['Date'] >= start]
     df1 = df[df['Date'] < end]
 
-    
-
-    
     df = pd.read_csv('./Data/stay-at-home-covid.csv')
     df = df[df['Entity'] == country]
     df = df[df['Date'] >= start]
@@ -115,7 +115,7 @@ def get_policy_data(start, end, country):
     
     return (df1["facial_coverings"].to_numpy(),df2["stay_home_requirements"].to_numpy(),df3["school_closures"].to_numpy())
 
-#create a function to plot the data using matplotlib
+#create a function to plot the data using matplotlib, kinda unnecessary tbh
 def plot_data(data, country,label):
     #create a figure
 
@@ -126,7 +126,8 @@ def plot_data(data, country,label):
     plt.ylabel("Number of Infected people")
     plt.title("Number of Infected people over time in " + country)
     return plt
-#method which returns the peaks of the data
+
+#method which returns the peaks and number of peaks for the data
 def get_peaks(data):
     smoothed_data =  sp.signal.savgol_filter(data, len(data)//2,7)
     peaks = sp.signal.find_peaks(smoothed_data)[0]
@@ -136,6 +137,7 @@ def get_peaks(data):
 
     return peaks, len(peaks)
 
+#fits the sir model but I havent changed this from robertos code
 def fit_sir_model(data):
     num_mixtures = get_peaks(data)[1]
     bound_S = (0,1E8)
@@ -158,6 +160,7 @@ def fit_sir_model(data):
     
     return y_hat_SIR
 
+
 def fit_gaussian_model(data, params):
     bias = np.min(data)
     norm_I = data - bias
@@ -166,9 +169,9 @@ def fit_gaussian_model(data, params):
     
     return y_hat_gaussian
 
+#fits the gaussians on a given data set and returns the parameters
 def gaussian_params(data):
     num_mixtures = get_peaks(data)[1]
-    #print(num_mixtures)
     bounds_mu = (0,40)
     bounds_sigma = (1,6)
     bounds_coef = (0,1500000)
@@ -186,16 +189,13 @@ def gaussian_params(data):
     params_gaussian = find_theta_sa(bounds_Gaussian, norm_I, mixture_exponentials) 
     return params_gaussian
 
+#forecasts the gaussian for a given number of weeks and returns the entire data
 def forecast_gaussian( data, params, steps, start_date, country,model):
     bias = np.min(data)
     norm_I = data - bias
     T = len(norm_I)
     #print(params)
     if tail_peak(data):
-    
-        # print("tail")
-        
-        
         next_params = get_next_params(start_date, params, country,model)
 
         if next_params:
@@ -212,7 +212,6 @@ def forecast_gaussian( data, params, steps, start_date, country,model):
                 params= np.insert(params, 7,next_params[1])
                 params= np.insert(params, 11,next_params[2])
     y_hat_gaussian = mixture_exponentials(params, T) + bias
-    # print(params)
     # plot_gaussians(params, data)
     for i in range(steps):
         c_T = len(y_hat_gaussian)
@@ -223,7 +222,7 @@ def forecast_gaussian( data, params, steps, start_date, country,model):
     return y_hat_gaussian
     
 
-
+#plots all the individual gaussians
 def plot_gaussians(params,data):
     adder = len(params)//3
     for i in range(adder):
@@ -231,17 +230,17 @@ def plot_gaussians(params,data):
         #print(new_params)
         plt.plot(fit_gaussian_model(data, new_params), label = "Gaussian " + str(i+1))
 
-# def is_holdiday(date, country):
-#     #get the holidays for the country
-#     holidays = get_holidays(country)
-#     date = date[0:-2]+"20"+date[-2:] #converts date to format that datetime can read
-#     date = datetime.datetime.strptime(date, "%m/%d/%Y")
-#     #check if there is a holday within two weeks after the date
-#     for i in range(1,15):
-#         if date.strftime("%m/%d") in holidays:
-#             return True
-#         date += datetime.timedelta(days=1)
-#     return False
+def is_holdiday(date, country):
+    #get the holidays for the country
+    holidays = get_holidays(country)
+    date = date[0:-2]+"20"+date[-2:] #converts date to format that datetime can read
+    date = datetime.datetime.strptime(date, "%m/%d/%Y")
+    #check if there is a holday within two weeks after the date
+    for i in range(1,15):
+        if date.strftime("%m/%d") in holidays:
+            return True
+        date += datetime.timedelta(days=1)
+    return False
 
 #function to determine whether the end of the data set is a peak
 def tail_peak(data):
@@ -265,14 +264,18 @@ def get_next_params(start_date, params, country,model):
         means = [params[0],params[1],params[2]]
         i = means.index(max(means))
         params = (params[i],params[i+3],params[i+6])
+    
+    #Just so it doesnt fit a gaussian too far into the future, thends to mess with predictions 
     if 45<params[0]<51:
-            
-            return False
+        return False
     mu = params[0] + 16 #assume that the next peak will be 18 weeks after the previous peak
     
 
     sigma = params[1]*0.7 #assume that the next peak will have the same standard deviation as the previous peak
 
+    '''
+    Use below code to use the regression model to get the next coefficient
+    '''
     #convert start_date to a datetime object
     # start_date = date_to_datetime(start_date)
     # mu_date = start_date + datetime.timedelta(days=mu*7) #convert the number of weeks to a date
@@ -280,15 +283,16 @@ def get_next_params(start_date, params, country,model):
     # feautures = get_feautures(mu_date, country)
     # coef = modl.predict(feautures)
 
+    '''
+    Use below code to use the previous coefficient to get the next coefficient
+    '''
     if len(params)>0:
         coef = params[2]
-
-    
 
     return mu,sigma,coef
 
 
-
+#Function to get the regression feuatures for a given date and country
 def get_feautures(date, country):
     #format the date as a datetime object
     #date = datetime.datetime.strptime(date, "%Y-%m-%d")
@@ -312,7 +316,7 @@ def get_feautures(date, country):
     x = poly.fit_transform([x])
     return x
     
-
+#function to get the the training daata for the regression model
 def get_x_y():
     start_date = '2/28/20'
     end_date = '8/5/21'
@@ -323,9 +327,9 @@ def get_x_y():
     x = np.array([])
     y = np.array([])
     for country in countries:
-        #data = get_csv_data(country, start, end)
         data = data_daily(path, start_date, end_date, country)
         y = np.append(y, data)
+        
         face_policy = get_policy_data(start, end, country)[0]
         home_policy = get_policy_data(start, end, country)[1]
         school_policy = get_policy_data(start, end, country)[2]
@@ -338,13 +342,13 @@ def get_x_y():
         x4 = pop.reshape(-1,1)
         x5 = urban_pop.reshape(-1,1)
         
-        #print(np.concatenate((x1,x2.T), axis = 1))
+
 
         if len(x)==0:
             x = (np.concatenate((x1,x2), axis = 1))
             x= np.concatenate((x,x3), axis = 1)
-            # x = np.concatenate((x,x4), axis = 1)
-            # x = np.concatenate((x,x5), axis = 1)
+            x = np.concatenate((x,x4), axis = 1)
+            x = np.concatenate((x,x5), axis = 1)
             
         else:
             temp = np.concatenate((x1,x2), axis = 1)
@@ -361,17 +365,15 @@ def get_x_y():
 def linear_regression():
     
     x,y = get_x_y()
-    #shuffle the data
   
-
+    #fits the input data to a fifth degree polynomial
     poly = PolynomialFeatures(degree =5)
     x = poly.fit_transform(x)
     
+    #splits the data into training and testing data
     x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2)
-    
 
-    # x_train = poly.fit_transform(x_train)
-    # x_test = poly.fit_transform(x_test)
+
     model = LinearRegression().fit(x_train, y_train)
     print(model.score(x_test,y_test))
     model = LinearRegression().fit(x, y)
