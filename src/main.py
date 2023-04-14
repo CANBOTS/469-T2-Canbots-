@@ -343,8 +343,8 @@ def get_x_y():
         if len(x)==0:
             x = (np.concatenate((x1,x2), axis = 1))
             x= np.concatenate((x,x3), axis = 1)
-            x = np.concatenate((x,x4), axis = 1)
-            x = np.concatenate((x,x5), axis = 1)
+            # x = np.concatenate((x,x4), axis = 1)
+            # x = np.concatenate((x,x5), axis = 1)
             
         else:
             temp = np.concatenate((x1,x2), axis = 1)
@@ -526,8 +526,8 @@ def graphics():
 
 #graphics()
 # print("regression")
-#linear_regression()
-main()
+linear_regression()
+#main()
 #print(population("US"))
 # print("neural")
 # neural_net()
