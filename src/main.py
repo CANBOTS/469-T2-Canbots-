@@ -1,3 +1,7 @@
+'''The code presented in this file was written based on Roberto Vega's code which can be found at https://github.com/rvegaml/SubpopulationModels
+In this code file, we extend on his work by creating models and methods which can better forecast covid 19 based on Gaussian models'''
+
+
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
@@ -295,7 +299,7 @@ def get_next_params(start_date, params, country,model):
     mu = params[0] + 16 #assume that the next peak will be 18 weeks after the previous peak
     
 
-    sigma = params[1]*0.7 #assume that the next peak will have the same standard deviation as the previous peak
+    sigma = params[1]*0.75 #assume that the next peak will have the same standard deviation as the previous peak
 
     '''
     Use below code to use the regression model to get the next coefficient
